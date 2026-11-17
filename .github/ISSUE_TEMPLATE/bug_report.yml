@@ -12,8 +12,8 @@ body:
     id: version
     attributes:
       label: SLOOP version
-      description: Tap HOME on the FM-1: the version is on the PROJECT page.
-      placeholder: "3.3.6"
+      description: Hold HOME on the FM-1, then SELECT to SYSTEM: the version is on KNOB 4.
+      placeholder: "3.4.0"
     validations:
       required: true
   - type: dropdown

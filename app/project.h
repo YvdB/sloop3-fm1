@@ -25,6 +25,9 @@ typedef struct {
     uint16_t preset16[SEQ_NTRK];                     /* format 13: each track's sound (0xFFFF none, bit 15 edited); preset[] keeps 7 bits */
     uint8_t tex[8];                                  /* format 13: TEXTURE (SRC LEVEL TONE MOVE RATE WHEN DUCK; 0xFF none) */
     uint8_t fxv[4];                                  /* format 14: the delay's COLR, MIX, the reverb's DAMP, the chorus's rate (0..127 as SLOOP's; 0xFF none) */
+    seq_pat *keep;                                   /* format 16 (4.0): each track's current pattern as last saved (SEQ_NTRK of them;
+                                                        0: none kept, none read); the sound as last saved: x->ps's current one */
+    uint8_t keep_got[SEQ_NTRK], pscur_got[SEQ_NTRK]; /* (load) read from the file (else: the pattern, the sound as they are) */
 } project_extra;
 int project_save(const seq_t *q, const gb_sound *s, const project_extra *x, uint8_t *buf, uint32_t cap);   /* its length, or -1 */
 /* 3.3.5: the file's bytes [lo, lo + n) into buf (a part: a page, a chunk), its whole length returned, its CRC (32,

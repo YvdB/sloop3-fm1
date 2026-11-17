@@ -166,8 +166,19 @@ int flash_busy(void)
     finish(); win_set(0); return 0;
 }
 void flash_wait_idle(void) { while (flash_busy()) { } }
+/* (3.3.8) the window off, the code that started the work must be RAM's: the twin runs the store's window functions
+ * (XT) natively, so a call from one is caught here (3.3.8's store_proj_prep: the FM-1 froze at the logo) */
+extern char __start_tw_xt[] __attribute__((weak)), __stop_tw_xt[] __attribute__((weak));
+static void from_ram(const void *ret, const char *what)
+{
+    if (__start_tw_xt && (const char *)ret >= __start_tw_xt && (const char *)ret < __stop_tw_xt) {
+        fprintf(stderr, "TWIN: %s started from a window function (XT, %p): it cannot go on with the window off\n", what, ret);
+        twin_fail_hook(); exit(70);
+    }
+}
 int flash_erase_start(uint32_t a)
 {
+    from_ram(__builtin_return_address(0), "an erase");
     if ((a & 4095u) || a >= TW_FLASH || flash_busy()) return -1;
     if (a < 0x4000u) { fprintf(stderr, "TWIN: an erase of m-bootloader's sector 0x%X\n", a); twin_fail_hook(); exit(71); }
     twin_flash_op(1, a, 4096);
@@ -180,6 +191,7 @@ int flash_erase_start(uint32_t a)
 }
 int flash_program_start(uint32_t a, const void *src, uint32_t n)
 {
+    from_ram(__builtin_return_address(0), "a write");
     if (!n || (a & 255u) + n > 256u || a + n > TW_FLASH || flash_busy()) return -1;
     if (a < 0x4000u) { fprintf(stderr, "TWIN: a write to m-bootloader at 0x%X\n", a); twin_fail_hook(); exit(71); }
     twin_flash_op(2, a, n);
@@ -354,7 +366,9 @@ int tw_usb_in_empty(void) { return qin_r == qin_w; }
 uint32_t tw_usb_take_out(uint8_t (*out)[4], uint32_t cap) { uint32_t n = qout_n < cap ? qout_n : cap; memcpy(out, qout, n * 4u); memmove(qout, qout + n, (qout_n - n) * 4u); qout_n -= n; return n; }
 void usb_midi_open(void) { }
 void usb_midi_poll(void) { adv(1000); }
+int tw_usb_on = 1;
 int usb_midi_ready(void) { return 1; }
+int usb_host_live(void) { return tw_usb_on; }   /* (3.3.8: the cable pulled: tw_usb_on 0) */
 void usb_midi_close(void) { }
 int usb_midi_take(uint8_t pk[4]) { if (qin_r == qin_w) return 0; memcpy(pk, qin[qin_r++ % QN], 4); return 1; }
 int usb_midi_put(const uint8_t pk[4]) { if (qout_n >= QN) { lost++; return 0; } memcpy(qout[qout_n++], pk, 4); return 1; }

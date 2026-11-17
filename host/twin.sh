@@ -24,6 +24,13 @@ run reboot reboot $O/boot/flash.bin
 same boot reboot
 run pages pages -
 run record record -
+run drums285 drums285 -                  # 3.3.8: SLOOP 2.8.5's drum gestures, the hits lit, HOME held: the menu
+run savestutter savestutter -            # 3.3.8: a save while it plays: no half with the flash off
+run punchsnd punchsnd -                  # 4.0.9, issue #6: FX + 1/4 on the sound browsers, at 40 BPM too
+run selwalk selwalk -                    # 4.0.8: every button's pages, SELECT right and left
+run saveproj saveproj -                  # 4.0.4: SAVE > PROJECT (SAVE, NEW)
+run sections sections -                  # 4.0: SLOOP 2.8's sections: a pattern changes only when saved
+run freetake freetake -                  # 3.3.8: the free take: REC pressed late on the "1", every hit on its step
 run record-reboot reboot $O/record/flash.bin
 same record record-reboot
 run settings settings $O/boot/flash.bin

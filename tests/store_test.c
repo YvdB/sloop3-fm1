@@ -349,7 +349,13 @@ static void max_tests(void)
     }
     Q1.song_n = SEQ_SONG; Q1.song_len = 0xFFFF;
     for (int i = 0; i < SEQ_SONG; i++) { Q1.song[i].bar = (uint16_t)(i * 9); Q1.song[i].mute = 31; for (int t = 0; t < SEQ_NTRK; t++) Q1.song[i].pat[t] = (uint8_t)(prnd() % SEQ_NPAT); }
-    memset(&X1, 0x7F, sizeof X1); X1.ps = &P1; memset(&X2, 0, sizeof X2); X2.ps = &P2;
+    /* (4.0) each track's current pattern as last saved: full too, and different (format 16) */
+    static seq_pat K1[SEQ_NTRK], K2[SEQ_NTRK];
+    for (int t = 0; t < SEQ_NTRK; t++) {
+        seq_pat *k = &K1[t]; *k = Q1.t[t].pat[Q1.t[t].cur]; k->steps = 77;
+        for (int e = 0; e < SEQ_PATEV; e++) k->ev[e].note = (uint8_t)((k->ev[e].note + 5) & 127);
+    }
+    memset(&X1, 0x7F, sizeof X1); X1.ps = &P1; X1.keep = K1; memset(&X2, 0, sizeof X2); X2.ps = &P2; X2.keep = K2;
     int n = project_save(&Q1, &S1, &X1, whole, sizeof whole);
     printf("  %d bytes, %d %% of the place (%u)\n", n, n * 100 / (int)STORE_PMAX, STORE_PMAX);
     CHECK(n > 0 && n <= (int)STORE_PMAX, "the largest project (%d bytes) does not fit its place (%u)", n, STORE_PMAX);
@@ -369,6 +375,14 @@ static void max_tests(void)
         for (int e = 0; e < a->n && same; e++) if (a->ev[e].tick != b->ev[e].tick || a->ev[e].len != b->ev[e].len || a->ev[e].note != b->ev[e].note || a->ev[e].vel != b->ev[e].vel || a->ev[e].cond != b->ev[e].cond) same = 0;
     }
     CHECK(same && Q2.song_n == SEQ_SONG, "the largest project came back different");
+    int ksame = 1, kgot = 0;                             /* (the largest: as many as fit; each one kept, as it was) */
+    for (int t = 0; t < SEQ_NTRK; t++) { const seq_pat *a = &K1[t], *b = &K2[t];
+        if (!X2.keep_got[t]) continue;
+        kgot++;
+        if (a->n != b->n || a->steps != b->steps || a->nlock != b->nlock) ksame = 0;
+        for (int e = 0; e < a->n && ksame; e++) if (a->ev[e].note != b->ev[e].note || a->ev[e].len != b->ev[e].len) ksame = 0; }
+    printf("  (4.0) %d of %d patterns as last saved kept\n", kgot, SEQ_NTRK);
+    CHECK(ksame && kgot >= 1, "(4.0) the patterns as last saved came back different (%d kept)", kgot);
     whole[n / 2] ^= 0x40; int bad = project_load_from(0, 0, 0, fetch_fn, (uint32_t)n, 1); whole[n / 2] ^= 0x40;
     (void)bad;                                           /* (a byte changed may still make a file: the store's CRC catches it) */
     CHECK(project_load_from(0, 0, 0, fetch_fn, (uint32_t)n - 1, 1) < 0, "a cut file passed the check");

@@ -3,7 +3,7 @@
 #include "project.h"
 
 #define PMAGIC 0x4A504247u                      /* "GBPJ" */
-#define PVERSION 15u                              /* 2: conditions, ratchets, locks, the song; 3: the effects, the
+#define PVERSION 16u                              /* 2: conditions, ratchets, locks, the song; 3: the effects, the
                                                    * presets; 4: the swing; 5: 24 sound parameters (the LFO); 6: the
                                                    * master (DUST, DUCK, the DJ filter, the punch-ins' fade) and each
                                                    * track's filter; 7: each track's DIV and GATE, its chorus
@@ -195,6 +195,26 @@ static void save_body(wr *wp, const seq_t *q, const gb_sound *s, const project_e
     for (int t = 0; t < PRJ_NTRK; t++) w16(&w, x && t < SEQ_NTRK ? x->preset16[t] : 0xFFFFu);   /* (each track's sound: 15 bits, bit 15 edited) */
     for (int i = 0; i < 8; i++) w8(&w, x ? x->tex[i] : 0xFFu);
     for (int i = 0; i < 4; i++) w8(&w, x ? x->fxv[i] : 0xFFu);   /* 14 */
+    /* 16 (4.0, SLOOP 2.8's sections): each track's current pattern as last saved, and its sound as last saved (the
+     * header holds the sound as it is now): a pattern played again comes back as it was saved */
+    for (int t = 0; t < SEQ_NTRK; t++) {
+        int cur = q->t[t].cur;
+        const seq_pat *k = x && x->keep ? &x->keep[t] : 0, *c = &q->t[t].pat[cur];
+        int diff = k && (k->n != c->n || k->steps != c->steps || k->nlock != c->nlock ||
+                         memcmp(k->ev, c->ev, sizeof k->ev[0] * k->n) || memcmp(k->lk, c->lk, sizeof k->lk[0] * k->nlock));
+        uint32_t fl = (x && x->ps ? 1u : 0u) | (diff ? 2u : 0u), need = 1u, rest = 0;
+        if (fl & 1u) need += PS_BYTES + (t == PS_DRUM ? PS_DRUM_BYTES : 0u);
+        for (int u = t + 1; u < SEQ_NTRK; u++) rest += 1u + (x && x->ps ? PS_BYTES + (u == PS_DRUM ? PS_DRUM_BYTES : 0u) : 0u);
+        if (diff && w.n + need + 5u + 8u * k->n + 3u * k->nlock + rest > STORE_PMAX) fl &= ~2u;   /* (the largest project: it must fit
+                                                         its place; the pattern as it is counts as saved then) */
+        w8(&w, fl);
+        if (fl & 1u) { uint8_t b[PS_BYTES + PS_DRUM_BYTES]; int n = ps_write(x->ps, t, cur, b); for (int i = 0; i < n; i++) w8(&w, b[i]); }
+        if (fl & 2u) {
+            w16(&w, k->steps); w16(&w, k->n); w8(&w, k->nlock);
+            for (int e = 0; e < k->n; e++) { w16(&w, k->ev[e].tick); w16(&w, k->ev[e].len); w8(&w, k->ev[e].note); w8(&w, k->ev[e].vel); w8(&w, k->ev[e].cond); w8(&w, k->ev[e].ratchet); }
+            for (int l = 0; l < k->nlock; l++) { w8(&w, k->lk[l].step); w8(&w, k->lk[l].param); w8(&w, k->lk[l].value); }
+        }
+    }
     *wp = w;
 }
 int project_save(const seq_t *q, const gb_sound *s, const project_extra *x, uint8_t *buf, uint32_t cap)
@@ -258,6 +278,15 @@ static int load_body(seq_t *q, gb_sound *s, project_extra *x, rd r, int check_on
     }
     if (ver >= 13) chk.n += PRJ_HOME + 2u * PRJ_NTRK + 8u;
     if (ver >= 14) chk.n += 4u;
+    if (ver >= 16) for (int t = 0; t < SEQ_NTRK && !chk.bad; t++) {
+        uint32_t fl = r8(&chk);
+        if (fl & 1u) chk.n += PS_BYTES + (t == PS_DRUM ? PS_DRUM_BYTES : 0u);
+        if (fl & 2u) {
+            uint32_t steps = r16(&chk), n = r16(&chk), nl = r8(&chk);
+            if (steps < 1 || steps > SEQ_MAXSTEPS || n > SEQ_PATEV || nl > SEQ_LOCKS) return -1;
+            chk.n += 8u * n + 3u * nl;
+        }
+    }
     if (chk.bad || chk.n > len) return -1;
     if (check_only) return 0;
     /* the real load */
@@ -398,6 +427,31 @@ static int load_body(seq_t *q, gb_sound *s, project_extra *x, rd r, int check_on
     for (int t = 0; t < PRJ_NTRK; t++) { uint32_t v = ver >= 13 ? r16(&r) : 0xFFFFu; if (x && t < SEQ_NTRK) x->preset16[t] = (uint16_t)v; }
     for (int i = 0; i < 8; i++) { uint32_t v = ver >= 13 ? r8(&r) : 0xFFu; if (x) x->tex[i] = (uint8_t)v; }
     for (int i = 0; i < 4; i++) { uint32_t v = ver >= 14 ? r8(&r) : 0xFFu; if (x) x->fxv[i] = (uint8_t)v; }
+    if (x) { memset(x->keep_got, 0, sizeof x->keep_got); memset(x->pscur_got, 0, sizeof x->pscur_got); }
+    if (ver >= 16) for (int t = 0; t < SEQ_NTRK; t++) {   /* 16: the current patterns and their sounds as last saved */
+        uint32_t fl = r8(&r), cur = q->t[t].cur;
+        if (fl & 1u) {
+            uint32_t n = PS_BYTES + (t == PS_DRUM ? PS_DRUM_BYTES : 0u);
+            if (x && x->ps && r.n + n <= r.len) {
+                uint8_t b[PS_BYTES + PS_DRUM_BYTES]; rd sb = sub_of(&r, n);
+                for (uint32_t k = 0; k < n; k++) b[k] = (uint8_t)r8(&sb);
+                if (ps_read(x->ps, t, (int)cur, b, n, 0)) x->pscur_got[t] = 1;
+            }
+            r.n += n;
+        }
+        if (fl & 2u) {
+            seq_pat tmp, *k = x && x->keep ? &x->keep[t] : &tmp;
+            k->steps = (uint16_t)r16(&r); k->n = (uint16_t)r16(&r); k->nlock = (uint8_t)r8(&r);
+            for (int e = 0; e < k->n; e++) {
+                k->ev[e].tick = (uint16_t)r16(&r); k->ev[e].len = (uint16_t)r16(&r);
+                k->ev[e].note = (uint8_t)(r8(&r) & 127u); k->ev[e].vel = (uint8_t)(r8(&r) & 127u); k->ev[e].cond = (uint8_t)r8(&r);
+                uint32_t ra = r8(&r), rn = ra & 7u; k->ev[e].ratchet = (uint8_t)((rn < 1 ? 1 : rn > 4 ? 4 : rn) | (ra & 0x30u));
+            }
+            for (int l = 0; l < k->nlock; l++) { k->lk[l].step = (uint8_t)r8(&r); k->lk[l].param = (uint8_t)(r8(&r) & 63u); k->lk[l].value = (uint8_t)r8(&r); }
+            for (int a = 1; a < k->n; a++) { seq_ev ea = k->ev[a]; int b = a; while (b > 0 && k->ev[b - 1].tick > ea.tick) { k->ev[b] = k->ev[b - 1]; b--; } k->ev[b] = ea; }
+            if (x && x->keep) x->keep_got[t] = 1;
+        }
+    }
     if (ver < 3 && x) {                               /* older: the effects as they were, no preset known */
         x->dly_div = 0xFF;
         for (int t = 0; t < SEQ_NTRK; t++) x->preset[t] = 0xFF;

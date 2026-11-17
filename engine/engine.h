@@ -267,7 +267,8 @@ typedef struct gb_sound {
     float rev_lp[8], rev_fb, rev_damp;
     /* the limiter */
     float lim_gain, lim_env;
-    uint8_t lowcut;                                    /* HOME > AUDIO SPEAKER: the speaker's low cut (12 dB/oct ~110 Hz), the drums' lows carried up */
+    uint8_t lowcut;                                    /* HOME > AUDIO SPEAKER: the speaker's low cut (12 dB/oct ~110 Hz), the drums' lows carried up;
+                                                        * 2 (4.0.2): the drums' only, the firmware cuts the DAC's out itself (the USB audio stays whole) */
     float lc[4];
     float flt_q;                                       /* HOME > AUDIO > FILTER RESO: the tracks' filters' Q */
     uint8_t usb_full;                                  /* HOME > AUDIO > USB FULL: usb_l / usb_r the mix before MASTER */
@@ -335,6 +336,7 @@ typedef struct { float l[GB_NTRACK][GB_BLOCK], r[GB_NTRACK][GB_BLOCK]; uint32_t 
 /* a track's SLICER and INSERT (trackfx.c) */
 int tfx_slicer(gb_sound *s, int t, float *l, float *r), tfx_insert(gb_sound *s, int t, float *l, float *r);
 int tfx_busy(const gb_sound *s, int t);
+uint32_t tfx_slicer_view(int t, int pat);
 void tfx_reset(void);
 void texture_mix(gb_sound *s, float *ml, float *mr, float duck0, float duck1);
 void texture_reset(void);

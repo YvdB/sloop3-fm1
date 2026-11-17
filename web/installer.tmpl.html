@@ -607,15 +607,19 @@ function attach(o, i) {
   if (inp) inp.onmidimessage = null;
   out = o; inp = i; inp.onmidimessage = onMsg;
 }
-/* m-bootloader's MIDI MODE: "FM-1 Update" until 2.2; from 2.3 it answers as M-VAVE's update loaders do,
- * "ota-FM-1_900". Each port that may be it is asked who it is (0x12): the one that says MBOOT is used */
-const UPD = /FM-1 Update|ota-FM-1/i;
+/* m-bootloader's MIDI MODE: "FM-1 Update" until 2.2; from 2.3 it may answer as M-VAVE's update loaders do,
+ * "ota-FM-1_900"; and a Mac keeps the name it first saw for a USB device ("Felucca Update" after SLOOP 2.8: issue #2).
+ * So no name is trusted: each port that may be the FM-1 is asked who it is (0x12), the update's names first, and the
+ * one that answers MBOOT is used */
+const UPD = /Update|ota-/i, FM1 = /FM-1|Felucca|SLOOP|CRITICAL|H[üu]gelton/i;
 function candidates() {
-  const outs = [...midi.outputs.values()].filter(p => UPD.test(p.name) && p.state !== 'disconnected');
-  const ins = [...midi.inputs.values()].filter(p => UPD.test(p.name) && p.state !== 'disconnected');
-  return outs.map(o => [o, ins.find(i => i.name === o.name) || ins[0]]).filter(x => x[1]);
+  const live = p => p.state !== 'disconnected';
+  const outs = [...midi.outputs.values()].filter(p => live(p) && (UPD.test(p.name) || FM1.test(p.name)));
+  outs.sort((a, b) => (UPD.test(b.name) ? 1 : 0) - (UPD.test(a.name) ? 1 : 0));
+  const ins = [...midi.inputs.values()].filter(live);
+  return outs.map(o => [o, ins.find(i => i.name === o.name)]).filter(x => x[1]);
 }
-let probing = false;
+let probing = false, again = false;      /* again: a port came or went while asking: ask once more */
 async function tryPort() {
   const cs = candidates();
   if (!cs.length || probing) return cs.length > 0;
@@ -628,7 +632,9 @@ async function tryPort() {
     if (state !== 'asking') { probing = false; return true; }          /* (it answered: ready, or refused) */
   }
   probing = false;
-  state = 'waiting'; show('waiting', true); problem('err3', T.noans, T.noansFix);
+  if (again) { again = false; return tryPort(); }
+  state = 'waiting'; show('waiting', true);
+  if (cs.some(([o]) => !UPD.test(o.name))) problem('err3', T.running, T.runningFix); else problem('err3', T.noans, T.noansFix);
   return true;
 }
 $('con').onclick = async () => {
@@ -636,15 +642,14 @@ $('con').onclick = async () => {
     if (!navigator.requestMIDIAccess) { problem('err3', T.nomidi, ''); return; }
     try { midi = midi || await navigator.requestMIDIAccess({ sysex: true }); }
     catch (e) { problem('err3', T.denied, T.deniedFix); return; }
+    const names = () => [...midi.outputs.values()].map(p => p.name);
+    /* (the FM-1 plugged or restarted later: found when it appears; a firmware's port asked again then too) */
+    midi.onstatechange = () => { if (probing) again = true; else if (state === 'waiting') setTimeout(() => { if (state === 'waiting') tryPort(); }, 400); };
     if (await tryPort()) return;
     state = 'waiting'; show('waiting', true); show('device', false); show('err3', false);
     const st = $('status'); st.textContent = ''; st.className = 'status';
-    const names = () => [...midi.outputs.values()].map(p => p.name);
-    const firmware = () => names().some(n => /SLOOP|Felucca|CRITICAL|FM-1/i.test(n) && !UPD.test(n));
-    if (firmware()) problem('err3', T.running, T.runningFix);
     clearTimeout(hintT);
-    hintT = setTimeout(() => { if (state === 'waiting' && !firmware()) problem('err3', fmt(T.noport, { n: names().join(', ') || '—' }), T.noportFix); }, 8000);
-    midi.onstatechange = () => { if (state === 'waiting') setTimeout(async () => { if (state === 'waiting' && !(await tryPort()) && firmware()) problem('err3', T.running, T.runningFix); }, 400); };
+    hintT = setTimeout(() => { if (state === 'waiting' && !candidates().length) problem('err3', fmt(T.noport, { n: names().join(', ') || '—' }), T.noportFix); }, 8000);
   } catch (err) { problem('err3', T.err + err.message, ''); }
 };
 /* ---------------------------------------------------------------- keeping the screen on, the tab in front */

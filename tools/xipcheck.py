@@ -56,6 +56,25 @@ while stack:
     for c in funcs[f]["calls"]:
         if c in funcs and (f, c) not in ALLOWED:
             stack.append((c, path + [c]))
+# (3.3.8) what starts flash work goes on once the window is off: it, and what it returns into, must be in RAM
+# (3.3.8's store_proj_prep was in the window: the FM-1 froze at the logo). In the sources, a function that calls
+# erase_start or program_start must not be XT/COLD; in the binary, these and app_main must be in RAM
+STARTERS = ["store_step", "store_proj_prep", "ram_erase", "app_main"]
+for s in STARTERS:
+    if s in funcs and in_window(s):
+        bad.append(f"{s} starts flash work (or runs on after it) but is in the window")
+import os
+src_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+for rel in ["app/store.c", "fw/main.c"]:
+    lines = open(os.path.join(src_root, rel)).read().split("\n")
+    for i, l in enumerate(lines):
+        if re.match(r"^(XT|COLD)\b[^;]*\(", l):
+            body = []
+            for l2 in lines[i:]:
+                body.append(l2)
+                if l2.startswith("}") or (l2.rstrip().endswith("}") and l2 is l): break
+            if re.search(r"\b(erase_start|program_start|flash_erase_start|flash_program_start)\s*\(", "\n".join(body)):
+                bad.append(f"{rel}:{i + 1}: a window function starts flash work: {l.strip()[:80]}")
 # a RAM table holding a window address (a pointer followed while the window is off: 3.1's SF, found by hand)
 import struct
 img = open(elf, "rb").read()

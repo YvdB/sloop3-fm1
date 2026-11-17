@@ -711,7 +711,7 @@ GB_HOT void snd_mix(gb_sound *s, gb_bus *b, const gb_bus *other, int32_t *out)
         for (int n = 0; n < GB_BLOCK; n++) ml[n] = mr[n] = 0.0f;
         pk = 0.0f; snd_panic(s);
     }
-    if (s->lowcut) {                                                   /* the small speaker: two one-pole high-passes */
+    if (s->lowcut == 1) {                                              /* the small speaker: two one-pole high-passes */
         float a = s->lc[0], b2 = s->lc[1], c = s->lc[2], d = s->lc[3];
         for (int n = 0; n < GB_BLOCK; n++) {
             a += (ml[n] - a) * (1.0f / 64.0f); float x = ml[n] - a; b2 += (x - b2) * (1.0f / 64.0f); ml[n] = x - b2;

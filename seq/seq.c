@@ -208,6 +208,31 @@ static void step_set(seq_t *s, int trk, int step, int cond, int rat)
         if (rat >= 0) p->ev[i].ratchet = (uint8_t)((p->ev[i].ratchet & 0x30u) | (uint32_t)rat);   /* (its flags kept) */
     }
 }
+/* (3.3.8) one sound of a step (the drums, SLOOP 2.8.5's lanes): its event, its level and ratchet alone */
+SEQ_COLD int seq_hit_find(const seq_t *s, int trk, int step, int note)
+{
+    const seq_pat *p = &s->t[trk].pat[s->t[trk].cur];
+    for (int i = 0; i < p->n; i++) if (step_of(p, p->ev[i].tick) == step && p->ev[i].note == note) return i;
+    return -1;
+}
+SEQ_COLD int seq_hit_get(const seq_t *s, int trk, int step, int note, int *vel, int *rat)
+{
+    int i = seq_hit_find(s, trk, step, note);
+    if (i < 0) return 0;
+    const seq_ev *e = &s->t[trk].pat[s->t[trk].cur].ev[i];
+    if (vel) *vel = e->vel;
+    if (rat) *rat = SEQ_RAT(e->ratchet);
+    return 1;
+}
+SEQ_COLD void seq_hit_set(seq_t *s, int trk, int step, int note, int vel, int rat)
+{
+    int i = seq_hit_find(s, trk, step, note);
+    if (i < 0) return;
+    edit(s, trk, s->t[trk].cur);
+    seq_ev *e = &cur(s, trk)->ev[i];
+    if (vel >= 0) e->vel = (uint8_t)(vel < 1 ? 1 : vel > 127 ? 127 : vel);
+    if (rat >= 0) e->ratchet = (uint8_t)((e->ratchet & 0x30u) | (uint32_t)(rat < 1 ? 1 : rat > 4 ? 4 : rat));
+}
 int seq_step_flags(const seq_t *s, int trk, int step)
 {
     const seq_pat *p = &s->t[trk].pat[s->t[trk].cur];
@@ -641,6 +666,13 @@ static uint32_t global_of(const seq_track *k, uint32_t local)    /* a track's ti
 {
     int d = k->div < SEQ_NDIV ? k->div : SEQ_DIV_16;
     return d == SEQ_DIV_16 ? local : (uint32_t)(((uint64_t)local * DIV_DEN[d] + DIV_NUM[d] - 1u) / DIV_NUM[d]);
+}
+/* (4.0.9) the loop's length in the sequencer's ticks: the longest track's pattern (TRACKS' bar.beat counts in it) */
+uint32_t seq_loop_ticks(const seq_t *s)
+{
+    uint32_t m = 0;
+    for (int t = 0; t < SEQ_NTRK; t++) { const seq_track *k = &s->t[t]; uint32_t g = global_of(k, (uint32_t)k->pat[k->cur].steps * SEQ_TPS); if (g > m) m = g; }
+    return m;
 }
 static uint32_t change_point(const seq_t *s, int trk, uint32_t a, uint32_t g)
 {

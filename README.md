@@ -24,7 +24,13 @@ m-bootloader)
 
 ## What's new
 
-Everything underneath. The firmware was rewritten from scratch, and the new engine made room for features SLOOP 2.8
+**3.4.0: SLOOP 2.8.5's workflow.** SLOOP 3 now has SLOOP 2.8.5's pages, layers, gestures and way of saving (the
+8 patterns only change when you save them), with SLOOP 3's extras on top: 5 tracks, 8 patterns a track, 128 steps,
+SOUNDS and FAVS, the NOTES piano roll, the DRUMS grid and the MIX page. See the
+[release notes](../../releases) and [the guide](docs/GUIDE.md). **A project saved by 3.4.0 can't be read by 3.3.x**:
+back up with the editor before installing.
+
+Underneath, everything is new. The firmware was rewritten from scratch, and the new engine made room for features SLOOP 2.8
 never had.
 
 **The engine**
@@ -44,7 +50,7 @@ never had.
 
 - **5 tracks**: four synths (one more than SLOOP 2.8) and the drums.
 - Up to **128 steps** per pattern, **8 patterns per track**, each with its own sound.
-- Live recording kept at **1/96 of a step**; QUANT before or after. **8 levels of undo.**
+- Live recording kept at **1/96 of a step**; QUANT before or after. **3 levels of undo.**
 - **Your own breakbeats**: drop a break in the web editor; it finds every hit, cuts it into slices and sends it to
   the FM-1, on a synth track (SLICE: the slices on the keys) or as your own drum kit, saved under its name.
 - Step **conditions** (FILL, NO FILL, 1 of 2 … 4 of 4, 10 %–90 % chance) and **parameter locks** on the sound and the
@@ -58,13 +64,12 @@ never had.
 - Per-track INSERT (SOFT, HARD, FOLD, FUZZ, CRUSH, PHASER, FLANGER, CHORUS) and SLICER; delay, reverb, chorus;
   **27 punch-in effects** (hold FX and play them like keys; FX + HOME locks the layer); DUST, DUCK and a DJ filter on
   the master; **TEXTURE** under the mix.
-- **The battery** as a thin line along the bottom of the screen (green, yellow, red; blue and running on a computer's
-  USB).
+- **The battery** as an icon in the top right corner (its bars fill in turn on a computer's USB).
 - **The keys light up to guide you**: hold HOME (OPEN, NEW, SAVE), hold SAVE (your 8 patterns, dim to bright).
 - **SOUNDS**: every sound by category, each on a white key; 16 favourites; 32 sounds of your own.
 - A new interface in English, colour themes, and **six visualisers** (HOME on the tracks screen).
 - **USB audio** (class compliant, 44.1 or 48 kHz), USB MIDI in and out, MIDI in on the TRS jack.
-- A **web editor** in the browser: LIVE, sounds, sequencer, mixer, song, samples, kits, FM6 bank, projects, settings,
+- A **web editor** in the browser: LIVE, sounds, sequencer, mixer, song, samples, kits (and a drum kit from your own samples), FM6 bank, projects, settings,
   theme.
 - **Your SLOOP 2.8 work comes along**: at its first start SLOOP 3 opens SLOOP 2.8's projects, user presets,
   favourites, samples, SYN kits, FM6 bank and settings. It only reads them.

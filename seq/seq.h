@@ -25,7 +25,7 @@
 #define SEQ_TPS 96                       /* ticks a step (a step = a 1/16 note) */
 #define SEQ_BAR (16 * SEQ_TPS)           /* ticks a bar (4/4) */
 #define SEQ_PATEV 128                    /* events a pattern */
-#define SEQ_UNDO 8                        /* (8 since 3.0B9: the room for the NOTES page) */
+#define SEQ_UNDO 3                        /* (8 since 3.0B9; 3 in 4.0: the room for each track's pattern as last saved, fw/main.c keep) */
 #define SEQ_HELD 10                      /* keys held at once while recording */
 #define SEQ_LOCKS 32                     /* parameter locks a pattern */
 #define SEQ_SONG 96                      /* song entries */
@@ -107,7 +107,8 @@ void seq_advance_by(seq_t *s, uint64_t inc);            /* by inc (ticks << 16):
 uint32_t seq_bar(const seq_t *s);                        /* bars since PLAY */
 int seq_steps_per_bar(const seq_t *s, int trk);          /* the track's steps in a bar (its DIV), at least 1 */
 uint32_t seq_step_of(const seq_t *s, int trk);           /* the track's step now */
-uint32_t seq_local(const seq_t *s, int trk, uint32_t tick);   /* a tick of the sequencer as the track's own tick */
+uint32_t seq_local(const seq_t *s, int trk, uint32_t tick);
+uint32_t seq_loop_ticks(const seq_t *s);                 /* (4.0.9) the longest track's pattern, in the sequencer's ticks */   /* a tick of the sequencer as the track's own tick */
 void seq_set_div(seq_t *s, int trk, int div);            /* playing: the track goes on from where it is */
 void seq_set_gate(seq_t *s, int trk, int gate);
 /* patterns */
@@ -129,6 +130,9 @@ void seq_lock_set(seq_t *s, int trk, int step, int param, int value);   /* value
 int seq_lock_get(const seq_t *s, int trk, int step, int param);         /* -1: none */
 void seq_step_cond(seq_t *s, int trk, int step, int cond);
 void seq_step_ratchet(seq_t *s, int trk, int step, int n);
+int seq_hit_find(const seq_t *s, int trk, int step, int note);         /* (3.3.8) a sound of a step: its event, -1 */
+int seq_hit_get(const seq_t *s, int trk, int step, int note, int *vel, int *rat);   /* 0: not there */
+void seq_hit_set(seq_t *s, int trk, int step, int note, int vel, int rat);         /* -1: unchanged (undoable) */
 int seq_step_flags(const seq_t *s, int trk, int step);                 /* SEQ_SLIDE | SEQ_ACCENT of the step */
 void seq_step_flag(seq_t *s, int trk, int step, int flag, int on);     /* (undoable) */
 /* the NOTES page: the events one by one (the current pattern, in time order: an index into its ev[]) */
