@@ -74,10 +74,14 @@
 #include "../hal/fm1/uart.h"
 #include "../hal/fm1/irq.h"
 
-#define VERSION "3.4.0"
+#define VERSION "3.4.1"
 /* COLD: a function of the interface, run from the flash window (fw/ram.ld .xtext); never called while the window is
  * off (a save's flash work: fw/main.c's loop runs only the sound, the panel and the flash then) */
+#ifdef HOST
+#define COLD __attribute__((section("tw_xt")))                   /* (3.4.1: the twin sees a call to one with the window off) */
+#else
 #define COLD __attribute__((section(".xtext.main"), minsize))   /* (4.0.1: the smallest code: the room before the sample bank) */
+#endif
 /* RAMCONST: a table the audio block reads (main.o's other constants are in the window: fw/ram.ld) */
 #define RAMCONST __attribute__((section(".data.ramconst")))
 #define HALF_FRAMES 256u
@@ -625,7 +629,7 @@ COLD static void new_project(int with_loop)
     seq_init(&Q, rate_hz, 92.0f, &HIST);
     Q.note_on = sq_on; Q.note_off = sq_off; Q.locks = sq_locks;
     for (int t = 0; t < NTRK; t++) Q.t[t].quant = 100;   /* (3.3.7) a take on the steps, as SLOOP 2.8 recorded (QUANT OFF: as played) */
-    static const float LVL[NTRK] = { 0.45f, 0.45f, 0.45f, 0.85f, 0.45f };   /* (4.0.11, Sam: the 4 synths at the same level; the sounds' own levels: presets.c) */
+    static const float LVL[NTRK] = { 0.45f, 0.45f, 0.45f, 0.45f, 0.45f };   /* (4.0.11, Sam: the 4 synths at the same level; 3.4.0: the drums too, their kits louder (engine/drum.c); the sounds' own levels: presets.c) */
     /* SLOOP's: 808 BOOM, RHODES, LOFI FLUTE (SAMPLE); the kit; a pad on track 5 (SLOOP's engine order, place) */
     static const uint8_t SOUND0[NTRK][2] = { { 0, 0 }, { 1, 0 }, { 4, 5 }, { 0xFF, 0 }, { 0, 13 } };
     snd_all_off(&S);
@@ -674,7 +678,7 @@ COLD static void keys_map(void)
         if (white) white_key[w++] = k;
     }
 }
-static int oct, page, recording_armed;
+static int oct, page, recording_armed, armed_page = -1;   /* (3.4.1) the page REC was armed on: its screen there only */
 /* (3.3.8, as SLOOP 2.8.5) the keys of what the sequencer plays on the track selected: the drums' hits always, a synth's
  * notes with HOME > LIGHTS > NOTES; each lit while it sounds, a hit for 0.1 s at least (lit_t: in 8 ms) */
 static volatile uint32_t lit_on, lit_hit;
@@ -1267,7 +1271,9 @@ COLD static void fill_view(ui_view *v)
                 (L & (1u << BTN_EDIT)) ? BTN_EDIT : (L & (1u << BTN_SEL)) ? BTN_SEL : (L & (1u << BTN_ARP)) ? BTN_ARP :
                 (L & (1u << BTN_FX)) ? BTN_FX : -1;
     int pg = sticky, sel_page = 0;
-    int rec_screen = (recording_armed || countin) && !Q.playing && !ft_on && layer < 0;   /* REC armed: its screen */
+    /* REC armed: its screen, on the page it was armed on (3.4.1: SAVE, EDIT... opened then show their own page, and
+     * the knobs are theirs: SAVE > PROJECT > KNOB 1 changed the loop's length and saved nothing) */
+    int rec_screen = (recording_armed || countin) && !Q.playing && !ft_on && layer < 0 && sticky == armed_page;
     if ((pg == PG_DSOUND || pg == PG_KIT) && !is_drum(trk)) pg = PG_OSC;   /* (a synth track: its own pages) */
     if (layer < 0 && pg == PG_STEPS) layer = BTN_SEQ;                 /* (these pages are tiles too) */
     if (layer < 0 && pg == PG_SONG) layer = BTN_SAVE;
@@ -3680,7 +3686,7 @@ COLD static void buttons(void)
         if (Q.recording) seq_record(&Q, 0, trk);
         else if (Q.playing) seq_record(&Q, 1, trk);
         else {
-            recording_armed = !recording_armed;
+            recording_armed = !recording_armed; armed_page = sticky;
             if (!recording_armed) say("REC OFF");
             else say(project_empty() && !rec_mode ? "REC READY · PLAY FREELY" : rec_count ? "REC READY · PLAY: COUNT-IN" : "REC READY · YOUR NOTE STARTS IT");
         }
@@ -4027,7 +4033,7 @@ COLD static void encoders(void)
             if (sticky == PG_NOTES) { if (is_drum(trk)) sticky = PG_STEPS; ne_step = 0; ne_sub = 0; ne_wrote = 0; }
             continue;
         }
-        if ((recording_armed || countin) && !Q.playing && !ft_on && !L) {   /* the REC screen */
+        if ((recording_armed || countin) && !Q.playing && !ft_on && !L && sticky == armed_page) {   /* the REC screen */
             seq_track *k = &Q.t[trk];
             if (e == ENC_SELECT) tempo(Q.bpm + (float)da);
             if (e == ENC_PRESETS) choose_preset(d);
@@ -4484,7 +4490,7 @@ COLD __attribute__((noinline)) static void ui_round(void)
         else if ((uint32_t)(now - ft_said) > 400000u * lsb) { ft_said = now; }   /* (4.0: the REC screen shows the take; ft_say no longer called) */
     }
     if (save_soon && !saving && (uint32_t)(now - t_save_soon) > 1600000u * lsb) { save_soon = 0; save_project(1); }   /* (SAVE + a key) */
-    if (fav_dirty && !saving && flash_ok && !sbuf_held() && (uint32_t)(now - fav_t) > 1200000u * lsb) { fav_dirty = 0; fav_save(); }   /* (3.2: your favourites, once they rest) */
+    if (fav_dirty && !saving && !Q.playing && flash_ok && !sbuf_held() && (uint32_t)(now - fav_t) > 1200000u * lsb) { fav_dirty = 0; fav_save(); }   /* (3.2: your favourites, once they rest; 3.4.0: stopped, as the autosave: its erase would cut the sound) */
     /* an editor's transfer left halfway (the page closed, the cable out): dropped, sbuf free again (3.1.1) */
     if (saving && ed_wr.on && ed_wr.kind == 0 && (uint32_t)(now - ed_t_last) > 10000000u * lsb) {   /* (3.3.5) a project halfway */
         store_proj_abort(); saving = 0; ed_wr.on = 0; say_bad("PROJECT: STOPPED");
@@ -4780,7 +4786,7 @@ int app_main(uint32_t arg)
     const uint32_t half_ticks = (uint32_t)((uint64_t)HALF_FRAMES * AUDIO_RATE_DEN * lsb / (AUDIO_RATE_NUM / 1000000u));
     blk_ticks = half_ticks / (HALF_FRAMES / GB_BLOCK);
     t_pot = time_ticks(); t_stat = t_pot; t_autosave = t_pot;
-    uint32_t calm = 0, over = 0, t_over = time_ticks() - 6000000u * lsb;
+    uint32_t calm = 0, over = 0, t_over = time_ticks() - 6000000u * lsb; int overload_say = 0;
     t_input = t_pot; t_midi_play = t_pot; if (splash_on) splash_t0 = t_input;   /* (the logo from here; a knob turned: t_input moves) */
     uint32_t t_wdt = time_ticks();
     for (;;) {
@@ -4813,7 +4819,9 @@ int app_main(uint32_t arg)
                 snd_shed(&S);
                 S.voice_cap = n - 1 > floor ? n - 1 : floor;
                 calm = 0;
-                if (pct > 100u && ++over == 8u && (uint32_t)(t0 - t_over) > 5000000u * lsb) { t_over = t0; say_bad("CPU OVERLOAD: VOICES CUT"); }
+                /* (3.4.1) said with the interface, not here: this runs while a save has the window off, and say_bad is
+                 * the window's (3.4.0: a heavy sound saved while it played froze the FM-1) */
+                if (pct > 100u && ++over == 8u && (uint32_t)(t0 - t_over) > 5000000u * lsb) { t_over = t0; overload_say = 1; }
             } else if (S.voice_cap && pct < 55u && ++calm >= 64u) {
                 calm = 0;
                 if (++S.voice_cap >= GB_NVOICE) S.voice_cap = 0;
@@ -4841,6 +4849,7 @@ int app_main(uint32_t arg)
             else led_dwell();
             continue;
         }
+        if (overload_say) { overload_say = 0; say_bad("CPU OVERLOAD: VOICES CUT"); }   /* (the window on: 3.4.1) */
         slice_scan_poll();                                  /* (SLICE: a user slot just written, scanned a part at a time) */
         if (save_said) {
             /* (taken and cleared first: what follows may start the next flash job, its own kind set: 3.1.1, the

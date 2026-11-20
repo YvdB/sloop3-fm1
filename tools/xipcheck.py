@@ -9,7 +9,7 @@ import re, subprocess, sys
 
 elf, tc = sys.argv[1], sys.argv[2]
 ROOTS = ["render_block", "job_voices", "store_step", "flash_busy", "flash_wait_idle", "panel_step", "usb_midi_poll",
-         "time_wait_us", "cpu1_main", "isr_tick", "irq_tick", "usb_tick",
+         "time_wait_us", "cpu1_main", "isr_tick", "irq_tick", "usb_tick", "tick", "panel_tick", "trs_midi_poll",
          "sq_on", "sq_off", "sq_locks",            # (the sequencer's calls into fw/main.c, through pointers)
          "flash_read", "flash_erase_start", "flash_program_start"]   # (the store's steps call these through SF: 3.1.1)
 ALLOWED = {("midi_poll", "midi_in")}          # (midi_poll returns before parsing while the window is off)
@@ -59,7 +59,11 @@ while stack:
 # (3.3.8) what starts flash work goes on once the window is off: it, and what it returns into, must be in RAM
 # (3.3.8's store_proj_prep was in the window: the FM-1 froze at the logo). In the sources, a function that calls
 # erase_start or program_start must not be XT/COLD; in the binary, these and app_main must be in RAM
-STARTERS = ["store_step", "store_proj_prep", "ram_erase", "app_main"]
+STARTERS = ["store_step", "store_proj_prep", "ram_erase", "app_main",
+            # (3.4.1, from STOOP 0.1.1's black screen) hal/fm1/flash.c's own: they turn the window off and on, or
+            # change how it deciphers
+            "flash_open", "flash_jedec", "flash_plain_from", "flash_read", "flash_erase_start", "flash_program_start",
+            "flash_busy", "flash_wait_idle", "flash_xip_forget"]
 for s in STARTERS:
     if s in funcs and in_window(s):
         bad.append(f"{s} starts flash work (or runs on after it) but is in the window")

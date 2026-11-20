@@ -27,6 +27,10 @@ run record record -
 run drums285 drums285 -                  # 3.3.8: SLOOP 2.8.5's drum gestures, the hits lit, HOME held: the menu
 run savestutter savestutter -            # 3.3.8: a save while it plays: no half with the flash off
 run punchsnd punchsnd -                  # 4.0.9, issue #6: FX + 1/4 on the sound browsers, at 40 BPM too
+run midiimp midiimp -                    # 3.4.0, Sam: notes from the editor (a MIDI file) heard, each track alone
+run savepat savepat -                    # 3.4.0, Sam: patterns saved while it plays, the autosave with PLAY: no erase, no cut
+TWIN_ERASE_MS=300 run oversave oversave -   # 3.4.1: CPU OVERLOAD during a slow erase: said once the window is back (3.4.0 froze)
+run recsave recsave -                    # 3.4.1 (the monkey, seed 6): REC armed, SAVE > PROJECT still saves
 run selwalk selwalk -                    # 4.0.8: every button's pages, SELECT right and left
 run saveproj saveproj -                  # 4.0.4: SAVE > PROJECT (SAVE, NEW)
 run sections sections -                  # 4.0: SLOOP 2.8's sections: a pattern changes only when saved

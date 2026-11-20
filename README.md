@@ -24,6 +24,11 @@ m-bootloader)
 
 ## What's new
 
+**3.4.1: reliability and levels.** Two causes of freezes fixed (a message said during a long flash erase, and the
+interrupts' stack in memory the firmware reuses), a flash operation that never ends no longer stops the screen, every
+factory sound brought to the same loudness as heard (with its effects, on three keys), and the drum kits' snares,
+claps and hats evened out from one kit to the next. New checks run on every build and in the twin.
+
 **3.4.0: SLOOP 2.8.5's workflow.** SLOOP 3 now has SLOOP 2.8.5's pages, layers, gestures and way of saving (the
 8 patterns only change when you save them), with SLOOP 3's extras on top: 5 tracks, 8 patterns a track, 128 steps,
 SOUNDS and FAVS, the NOTES piano roll, the DRUMS grid and the MIX page. See the

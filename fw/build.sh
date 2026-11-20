@@ -31,6 +31,8 @@ RT=$(dirname "$TC")/lib/clang/23/lib/pi32v2/libclang_rt.builtins.a
 "$TC/llvm-nm" $O/ram.elf | python3 -c "import sys; a=[int(l.split()[0],16) for l in sys.stdin if l.split()[-1]=='__caller_sp']; sys.exit('__caller_sp is not on a word' if not a or a[0]%4 else 0)"
 # the flash window's rule: nothing that runs while a save has it off may be in it, or read it
 python3 tools/xipcheck.py $O/ram.elf "$TC"
+# (3.4.1) the stacks' worst case against their room (the main stack, the interrupts', the second core's)
+python3 tools/stackcheck.py $O/ram.elf "$TC" > $O/stack.txt || { cat $O/stack.txt; exit 1; }
 # app.bin: the XIP stub and the RAM image after it, packed (3.2: tools/lz4pack.py, unpacked by fw/unpack.c at the start;
 # tests/unpack_test.c runs that same code on the PC over this very image, and over damaged ones)
 python3 tools/lz4pack.py $O/ram.bin $O/ram.pk
@@ -51,7 +53,7 @@ python3 tools/mkfw.py $O/app.bin $O/fw.area assets/samples.bin
 test $(wc -c < $O/fw.area) -le $((0x78000 - 0x4000)) || { echo "the area would run into your FM6 bank and SYN kits (0x78000, app/xbank.h)"; exit 1; }
 "$TC/llvm-size" $O/ram.elf | tail -1
 # the installer page: through m-bootloader's MIDI MODE only (3.3.1: the way straight from SLOOP 2.8 is gone)
-python3 tools/mkpage.py $O/fw.area "3.4.0" $O/installer-fm1.html
+python3 tools/mkpage.py $O/fw.area "3.4.1" $O/installer-fm1.html
 python3 tools/mkeditor.py web/editor.html > /dev/null
 cp web/editor.html $O/editor-sloop3.html
 # the page against a simulated m-bootloader: the package it serves, decrypted, is fw.area (tests/install_sim.js)

@@ -1209,10 +1209,13 @@ async function midiImport(bytes, fname) {
   if (!tr) { log(L('midiBad'), 'bad'); return; }
   if (!R.P) await rollLoad(); if (!R.P) return;
   const k = 96 * 4 / m.div, notes = [];
+  /* (3.4.0, Sam: "the notes all SOFT") a file played softly (many give every note 64 or 80): the loudest note brought
+   * up to NORM (100), the others with it, so the FM-1 plays it as loud as its keys; a louder file stays as it is */
+  const vmax = Math.max(...tr.map(n => n.vel), 1), vk = vmax < 100 ? 100 / vmax : 1;
   for (const n of tr) {
     let note = n.note;
     if (drumT()) { let p = GM_PAD.indexOf(n.note); if (p < 0) p = [36, 35, 38, 39, 42, 46, 44, 37, 40, 43, 48, 49, 51, 70, 63, 56].indexOf(n.note); if (p < 0) continue; note = p; }
-    notes.push({ at: Math.round(n.at * k), len: Math.max(12, Math.round(n.len * k)), note, vel: n.vel, cond: 0, rat: 1 });
+    notes.push({ at: Math.round(n.at * k), len: Math.max(12, Math.round(n.len * k)), note, vel: clamp(Math.round(n.vel * vk), 1, 127), cond: 0, rat: 1 });
   }
   const last = Math.max(...notes.map(n => n.at + 1), 1), steps = clamp(Math.ceil(last / 96 / 16) * 16, 16, 128);
   snapshot(); R.P.steps = steps; R.P.notes = notes.filter(n => n.at < steps * 96).slice(0, 128);

@@ -7,15 +7,16 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 static int checks, fails;
 #define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("  FAIL %s:%d: ", __FILE__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
 /* a NOR flash: erase sets 0xFF, a write can only clear bits; an operation is busy for a few polls */
 static uint8_t fl[0x100000];
-static int busy_left, ops, cut_at = -1;
+static int busy_left, ops, cut_at = -1, erases;
 static int f_read(uint32_t a, void *d, uint32_t n) { memcpy(d, fl + a, n); return 0; }
 static int f_busy(void) { if (busy_left > 0) { busy_left--; return 1; } return 0; }
-static int f_erase(uint32_t a) { if (ops++ == cut_at) return -1; memset(fl + a, 0xFF, 4096); busy_left = 5; return 0; }
+static int f_erase(uint32_t a) { if (ops++ == cut_at) return -1; erases++; memset(fl + a, 0xFF, 4096); busy_left = 5; return 0; }
 static int f_prog(uint32_t a, const void *s, uint32_t n) { if (ops++ == cut_at) return -1; for (uint32_t i = 0; i < n; i++) fl[a + i] &= ((const uint8_t *)s)[i]; busy_left = 2; return 0; }
 static const store_flash F = { f_read, f_erase, f_prog, f_busy };
 
@@ -85,6 +86,34 @@ static void store_tests(void)
     }
     printf("  39 cuts: %d gave the version before, %d the new one, %d neither\n", n_old, n_new, worst);
     CHECK(worst == 0, "%d cuts left no whole project", worst);
+    /* (3.4.0) saves one after another (as while it plays): each after the newest, where the flash is still erased, so no
+     * erase until the banks are full; then the other bank again, erased; every copy comes back, the cuts too */
+    {
+        memset(fl, 0xFF, sizeof fl); store_init(&F); erases = 0;
+        int bad = 0, first_erase = -1;
+        for (int i = 0; i < 24; i++) {
+            const uint8_t *d = (i & 1) ? b_ : a_ + i; uint32_t n = 7000u + (uint32_t)i * 37u;
+            int e0 = erases;
+            if (save_proj(d, n, crc_of(d, n), 12032) || load_proj(got, sizeof got) != (int)n || memcmp(got, d, n)) bad++;
+            if (erases > e0 && first_erase < 0) first_erase = i;
+        }
+        printf("  24 saves of 7 KB in a row: the first erase at save %d, %d erases in all\n", first_erase + 1, erases);
+        CHECK(!bad, "%d saves in a row did not come back", bad);
+        CHECK(first_erase >= 7, "an erase already at save %d (6 copies of 2 sectors fit in the two banks after the first)", first_erase + 1);
+        int w = 0;
+        for (int cut = 0; cut < 2 + 28 + 8 + 2; cut++) {             /* a save that must erase, cut at each operation */
+            memset(fl, 0xFF, sizeof fl); store_init(&F); cut_at = -1;
+            for (int i = 0; i < 12; i++) save_proj(a_ + i, 7000, crc_of(a_ + i, 7000), 12032);
+            ops = 0; cut_at = cut;
+            int r = save_proj(b_, 7000, crc_of(b_, 7000), 12032);
+            cut_at = -1; store_init(&F);
+            int n = load_proj(got, sizeof got);
+            int old = n == 7000 && !memcmp(got, a_ + 11, 7000), neu = n == 7000 && !memcmp(got, b_, 7000);
+            if (!old && !neu) w++;
+            if (r == 0 && !neu) w++;
+        }
+        CHECK(w == 0, "a save over a full bank, cut: %d left no whole project", w);
+    }
     /* a torn byte in the new copy's data: the one before */
     memset(fl, 0xFF, sizeof fl); store_init(&F);
     save_proj(a_, 2000, crc_of(a_, 2000), 12032); save_proj(b_, 2000, crc_of(b_, 2000), 12032);
@@ -184,6 +213,14 @@ static void project_tests(void)
     int n = project_save(&Q1, &S1, &X1, buf, sizeof buf);
     printf("  %d bytes\n", n);
     CHECK(n > 0, "save failed");
+    CHECK(project_load(&Q2, &S2, &X2, buf, (uint32_t)n) == 0, "load failed");
+    CHECK(fabsf(S2.trk[0].level.tgt - S1.trk[0].level.tgt) < 1e-6f, "the drums' level not kept (%f)", S2.trk[0].level.tgt);
+    /* (3.4.0) a project from before (17): the kits 3 x louder since, its drums' level a third (as it sounded) */
+    { static uint8_t old[sizeof buf]; memcpy(old, buf, (size_t)n); old[4] = 16;
+      sm_set(&S1.trk[0].level, 0.9f); int m = project_save(&Q1, &S1, &X1, old, sizeof old); old[4] = 16;
+      CHECK(m > 0 && project_load(&Q2, &S2, &X2, old, (uint32_t)m) == 0 && fabsf(S2.trk[0].level.tgt - 0.3f) < 1e-5f && fabsf(S2.trk[1].level.tgt - 0.05f) < 1e-5f,
+            "a project of 16: the drums %f (0.3), a synth %f (0.05)", S2.trk[0].level.tgt, S2.trk[1].level.tgt);
+      sm_set(&S1.trk[0].level, 0.0f); }
     CHECK(project_load(&Q2, &S2, &X2, buf, (uint32_t)n) == 0, "load failed");
     CHECK(Q2.bpm == 133.0f && Q2.t[2].mute == 1 && Q2.t[4].quant == 70 && Q2.t[4].cur == 6 && Q2.t[3].pat[0].steps == 96, "settings lost");
     int same = 1;

@@ -82,6 +82,14 @@ void twin_audio(const int32_t *lr, uint32_t frames)
         if (a > 1.01) tw_wild++;
     }
     if (tw_wav) { for (uint32_t i = 0; i < 2 * frames; i++) { int v = lr[i] >> 8; v = v > 32767 ? 32767 : v < -32768 ? -32768 : v; int16_t s = (int16_t)v; fwrite(&s, 2, 1, tw_wav); } tw_wav_n += frames; }
+    {   /* (3.4.1) the interface's pass (fw/main.c t_ui): 3 s without one while the sound goes on is what a player calls a
+         * freeze (the screen still, the buttons dead) */
+        static int said; uint32_t now = (uint32_t)(tw_ns * lsb / 1000u), lim = 3000000u * lsb;
+        if (t_ui && lsb && (uint32_t)(now - t_ui) > lim && !said && cal_step < 0) {
+            said = 1; tw_checks++; tw_fails++;
+            printf("[%8.3f] FAIL the interface stood still %.1f s (the sound going on): a freeze\n", tw_s(), (double)(uint32_t)(now - t_ui) / (lsb * 1e6));
+        }
+    }
     tw_safe_point();
 }
 static uint32_t tw_erases, tw_writes, tw_unerased;
@@ -493,7 +501,7 @@ static void sc_bigproj(void)
     check_project_roundtrip("the fullest project");
     /* changed while it is being written: written again, from what it is then */
     fill_max(); uint32_t c3, n3 = proj_measure(&c3);
-    m = msg_mark(); save_project(1); wait_ms(300);
+    m = msg_mark(); save_project(1); for (int i = 0; i < 300 && !store_proj_given(); i++) wait_ms(1);   /* (3.4.0: no erase first, the writing starts at once) */
     Q.t[2].pat[5].ev[7].vel ^= 1u; uint32_t c4, n4 = proj_measure(&c4);
     EXPECT(wait_msg(m, "SAVING AGAIN", 20000), "changed during its save: not written again");
     EXPECT(wait_msg(m, "PROJECT SAVED", 30000), "changed during its save: no PROJECT SAVED after");
@@ -1373,6 +1381,42 @@ static void sc_punchsnd(void)
         EXPECT(!S.panics, "pass %d: the sound panicked (%u)", pass, S.panics);
     }
     trk = 0;
+}
+/* (3.4.0, Sam: "a MIDI file imported in the editor shows in the FM-1's sequencer, but PLAY gives no sound") what
+ * midiImport + patWrite send (ED_NOTES2: cond 0, ratchet 1, the playing pattern), then each track alone, playing */
+static double solo_peak(int t, double ms) { for (int u = 0; u < NTRK; u++) solo[u] = u == t; wait_ms(200); double pk = peak_over(ms); for (int u = 0; u < NTRK; u++) solo[u] = 0; return pk; }
+static void midi_pat(int t, int pt, int steps, int base)
+{
+    uint8_t raw[7 + 8 * 16], rep[64]; uint32_t rn;
+    raw[0] = (uint8_t)t; raw[1] = (uint8_t)pt; raw[2] = 0; raw[3] = 0; raw[4] = (uint8_t)steps; raw[5] = 0; raw[6] = 16;
+    for (int i = 0; i < 16; i++) {
+        uint8_t *o = raw + 7 + 8 * i; uint32_t at = (uint32_t)i * (uint32_t)steps / 16u * SEQ_TPS, len = SEQ_TPS * 2;
+        o[0] = (uint8_t)at; o[1] = (uint8_t)(at >> 8); o[2] = (uint8_t)len; o[3] = (uint8_t)(len >> 8);
+        o[4] = (uint8_t)(base < 0 ? i : base + (i % 8) * 2); o[5] = 96; o[6] = 0; o[7] = 1;
+    }
+    int r = tw_ed(ED_NOTES2, raw, 7 + 8 * 16, rep, &rn, 2000);
+    EXPECT(r == ED_NOTES2 && (rep[2] | rep[3] << 8) == 16, "track %d: the notes not written (%d)", t, r);
+}
+static void sc_midiimp(void)
+{
+    boot_wait(); wait_ms(800);
+    for (int pass = 0; pass < 2; pass++) {
+        if (pass) { home_do(HK_NEW); wait_ms(100); home_do(HK_NEW); wait_ms(800); printf("[%8.3f]    a new project\n", tw_s()); }
+        for (int t = 0; t < NTRK; t++) midi_pat(t, 255, 16, is_drum(t) ? -1 : 48);
+        wait_ms(300);
+        tap(B_PLAY); wait_ms(300);
+        for (int t = 0; t < NTRK; t++) {
+            double pk = solo_peak(t, 2500);
+            printf("[%8.3f]    pass %d, track %d (%s, pattern %d, %d notes): peak %.4f\n", tw_s(), pass, t, preset_of[t] >= 0 ? gb_presets[preset_of[t]].name : "-", Q.t[t].cur + 1, Q.t[t].pat[Q.t[t].cur].n, pk);
+            EXPECT(pk > 0.001, "pass %d, track %d: the imported notes not heard (peak %.4f)", pass, t, pk);
+        }
+        tap(B_PLAY); wait_ms(300);
+    }
+    tap(B_PLAY); wait_ms(300);   /* written while it plays */
+    midi_pat(1, 255, 16, 60); wait_ms(800);
+    { double pk = solo_peak(1, 2500); printf("[%8.3f]    track 1 written while playing: %d notes, peak %.4f\n", tw_s(), Q.t[1].pat[Q.t[1].cur].n, pk);
+      EXPECT(pk > 0.001, "written while playing: not heard (peak %.4f)", pk); }
+    tap(B_PLAY); wait_ms(300);
 }
 /* (4.0.8, Sam: "SEL does not walk with SELECT") every button's pages: tapped, then SELECT right to the last, then left
  * back to the first, on a synth track and on the drums */
@@ -2386,6 +2430,74 @@ static void sc_savestutter(void)
     printf("[%8.3f]    a save right after, not prepared: %u halves with the flash off\n", tw_s(), d2);
     tap(B_PLAY); wait_ms(300);
 }
+/* (3.4.1) the CPU over its time (TWIN_HALF_US, host/twin.sh) while it plays and saves: CPU OVERLOAD is said, and nothing
+ * of the window runs while a save has it off (3.4.0 said it from the sound's loop, the window off: a freeze) */
+/* (3.4.1, the monkey's seed 6) REC armed while stopped (REC READY), the menu opened and closed: SAVE still saves */
+static void sc_recsave(void)
+{
+    boot_wait();
+    seq_step_toggle(&Q, 3, 2, 0, 100); wait_ms(100);
+    tap(B_REC); wait_ms(300);
+    printf("[%8.3f]    armed %d sticky %d\n", tw_s(), (int)recording_armed, sticky);
+    press(B_HOME); wait_ms(700); release(B_HOME); wait_ms(300); tap(B_HOME); wait_ms(300);
+    save_and_wait();
+    tap(B_REC); wait_ms(300); save_and_wait();
+}
+extern uint32_t tw_half_us;
+static void sc_oversave(void)
+{
+    boot_wait();
+    tap(B_PLAY); wait_ms(500);
+    for (int k = 0; k < 3; k++) {
+        /* an erase of 300 ms (a slow part's: TWIN_ERASE_MS, host/twin.sh) under way, the window off, and the sound over
+         * its time meanwhile (a heavy moment): the load guard's CPU OVERLOAD comes while the window is off */
+        while (!flash_xip_on()) wait_ms(1);
+        EXPECT(flash_erase_start(0xE1000u) == 0, "an erase in the staging area refused");   /* (SLOOP 2.8 import staging: erasable) */
+        tw_half_us = 6200; wait_ms(200); tw_half_us = 0;
+        wait_ms(5500);                                     /* (CPU OVERLOAD said at most every 5 s) */
+    }
+    EXPECT(said_since(0, "OVERLOAD"), "the CPU over its time: no CPU OVERLOAD said");
+    seq_step_toggle(&Q, 3, 2, 0, 100); wait_ms(100); save_and_wait();
+    tap(B_PLAY); wait_ms(300);
+}
+/* (3.4.0, Sam: "saving the patterns 1 to 8 cuts the sound while it plays; and the autosave must not") playing, a pattern
+ * saved after another (SAVE held + its key held 1.5 s): how many audio halves the flash window was off (the samples and
+ * kits silent meanwhile) */
+static void sc_savepat(void)
+{
+    boot_wait();
+    for (int i = 0; i < 200 && !store_proj_ready(); i++) wait_ms(100);
+    tap(B_PLAY); wait_ms(800);
+    uint32_t total = 0;
+    for (int k = 0; k < 8; k++) {
+        seq_step_toggle(&Q, 3, k, 0, 100); wait_ms(100);              /* (a change: the save writes) */
+        uint32_t d0 = dark_halves;
+        press(B_SAVE); wait_ms(300); keydown(white_key[k]); wait_ms(1700); keyup(white_key[k]); wait_ms(100); release(B_SAVE);
+        wait_ms(300); wait_saved(8000); wait_ms(500);
+        uint32_t d = dark_halves - d0; total += d;
+        { uint32_t a = 0, n = 0; store_proj_find(&a, &n, 0); printf("[%8.3f]    pattern %d saved while playing: %u halves with the flash off (%.0f ms); the copy at %05X, %u bytes\n", tw_s(), k + 1, d, d * 1.451, a, n); }
+    }
+    EXPECT(total == 0, "8 pattern saves while playing: %u halves with the flash off (a stutter)", total);
+    tap(B_PLAY); wait_ms(300);
+    /* the autosave (stopped, untouched 2.5 s): PLAY pressed while it writes; then 8 more saves while it plays */
+    for (int round = 0; round < 3; round++) {
+        seq_step_toggle(&Q, 3, 9 + round, 0, 100);
+        int seen = 0; for (int i = 0; i < 2500 && !seen; i++) { wait_ms(10); seen = saving; }   /* (at most every 20 s) */
+        uint32_t d0 = dark_halves; tap(B_PLAY); wait_ms(300); wait_saved(8000); wait_ms(300);
+        uint32_t d = dark_halves - d0;
+        printf("[%8.3f]    round %d: the autosave %s, PLAY pressed then: %u halves with the flash off\n", tw_s(), round, seen ? "writing" : "not seen", d);
+        EXPECT(seen && d == 0, "round %d: PLAY during the autosave: %u halves with the flash off (seen %d)", round, d, seen);
+        uint32_t t2 = 0;
+        for (int k = 0; k < 8; k++) {
+            seq_step_toggle(&Q, 3, k, 0, 100); wait_ms(100); uint32_t d1 = dark_halves;
+            press(B_SAVE); wait_ms(300); keydown(white_key[k]); wait_ms(1700); keyup(white_key[k]); wait_ms(100); release(B_SAVE);
+            wait_ms(300); wait_saved(8000); wait_ms(300); t2 += dark_halves - d1;
+        }
+        printf("[%8.3f]    round %d: 8 more saves while playing: %u halves with the flash off\n", tw_s(), round, t2);
+        EXPECT(t2 == 0, "round %d: 8 saves while playing: %u halves with the flash off", round, t2);
+        tap(B_PLAY); wait_ms(6000);                                   /* (stopped: the other bank prepared meanwhile) */
+    }
+}
 static void sc_drums285(void)
 {
     boot_wait();
@@ -2464,7 +2576,7 @@ static void sc_drums285(void)
         seq_step_toggle(&Q, dt, 9, 2, 100); wait_ms(100);          /* (a change, so that a save writes) */
         int cur = Q.t[trk].cur; uint32_t at0, n0 = 0, c0 = 0; store_proj_find(&at0, &n0, &c0);
         /* (3.3.8) held 1 s and let go: nothing saved (1.5 s it takes: 0.6 s saved by mistake) */
-        press(B_SAVE); wait_ms(500); keydown(white_key[cur]); wait_ms(1000); keyup(white_key[cur]); wait_ms(100); release(B_SAVE); wait_ms(2500);
+        press(B_SAVE); wait_ms(500); keydown(white_key[cur]); wait_ms(1000); keyup(white_key[cur]); wait_ms(100); release(B_SAVE); wait_ms(2000);   /* (3.4.0: before the autosave, quicker now: 2.5 s untouched) */
         { uint32_t a, n, c = 0; store_proj_find(&a, &n, &c); EXPECT(c == c0 && !V.saved, "held 1 s: saved (%d)", V.saved); }
         press(B_SAVE); wait_ms(500); keydown(white_key[cur]); wait_ms(700);
         int gauge = V.tile[cur].style == T_GAUGE && V.tile[cur].lvl > 20 && V.tile[cur].lvl < 100;
@@ -2543,10 +2655,10 @@ static void sc_freetake(void)
     }
 }
 static const struct { const char *name; void (*fn)(void); } SC[] = {
-    { "freetake", sc_freetake }, { "drums285", sc_drums285 }, { "savestutter", sc_savestutter }, { "sections", sc_sections },
+    { "freetake", sc_freetake }, { "drums285", sc_drums285 }, { "savestutter", sc_savestutter }, { "savepat", sc_savepat }, { "oversave", sc_oversave }, { "recsave", sc_recsave }, { "sections", sc_sections },
     { "boot", sc_boot }, { "reboot", sc_reboot }, { "sounds", sc_sounds }, { "ukit", sc_ukit }, { "pages", sc_pages }, { "record", sc_record },
     { "powercut", sc_powercut }, { "aftercut", sc_after_cut }, { "sample", sc_sample }, { "editor", sc_editor },
-    { "monkey", sc_monkey }, { "import", sc_import }, { "midi", sc_midi }, { "rescue", sc_rescue }, { "calib", sc_calib }, { "settings", sc_settings }, { "play", sc_play }, { "levels", sc_levels }, { "mixui", sc_mixui }, { "fx", sc_fx }, { "editor2", sc_editor2 }, { "serve", sc_serve }, { "vis", sc_vis }, { "banksave", sc_banksave }, { "punch", sc_punch }, { "film", sc_film }, { "inst", sc_inst }, { "lowend", sc_lowend }, { "tour", sc_tour }, { "saveproj", sc_saveproj }, { "selwalk", sc_selwalk }, { "punchsnd", sc_punchsnd }, { "film2", sc_film2 }, { "bigproj", sc_bigproj }, { "bigcut", sc_bigcut }, { "punch2", sc_punch2 }, { "crumb", sc_crumb }, { "nan", sc_nan } };
+    { "monkey", sc_monkey }, { "import", sc_import }, { "midi", sc_midi }, { "rescue", sc_rescue }, { "calib", sc_calib }, { "settings", sc_settings }, { "play", sc_play }, { "levels", sc_levels }, { "mixui", sc_mixui }, { "fx", sc_fx }, { "editor2", sc_editor2 }, { "serve", sc_serve }, { "vis", sc_vis }, { "banksave", sc_banksave }, { "punch", sc_punch }, { "film", sc_film }, { "inst", sc_inst }, { "lowend", sc_lowend }, { "tour", sc_tour }, { "saveproj", sc_saveproj }, { "selwalk", sc_selwalk }, { "punchsnd", sc_punchsnd }, { "midiimp", sc_midiimp }, { "film2", sc_film2 }, { "bigproj", sc_bigproj }, { "bigcut", sc_bigcut }, { "punch2", sc_punch2 }, { "crumb", sc_crumb }, { "nan", sc_nan } };
 static void (*tw_sc)(void);
 static void *tw_script(void *arg)
 {

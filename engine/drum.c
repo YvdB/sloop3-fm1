@@ -83,12 +83,18 @@ static int usr_zone(int k, int gm)                /* a user slot's zone for a ke
     }
     return zi;
 }
+/* (3.4.0, Sam: "the drum kits barely heard, above all the kicks, even with the drums higher than the other tracks")
+ * the kits 3 times (+9.5 dB) as loud as before (0.5), so that the drum track at the synths' level (45) is heard over
+ * them; a new project's drums at 45 like the others (were 85), a project from before scaled down to sound as it did
+ * (app/project.c); the kicks (lanes 1-2) +3 dB more */
+#define GB_DRUM_GAIN 1.5f
+#define GB_KICK_GAIN 1.41f
 GB_SMALL static void drum_start(gb_voice *v, const gb_patch *p, int fresh)
 {
     (void)fresh;
     int lane = v->note & 15, kit = gb_ev(p, 0), tune = gb_ev(p, 1) + p->dtune[lane];
     int ds = gb_ev(p, 2) + p->ddec[lane]; ds = ds < -4 ? -4 : ds > 3 ? 3 : ds;
-    float vel = v->vel;
+    float vel = v->vel, lg = vel * (lane < 2 ? GB_DRUM_GAIN * GB_KICK_GAIN : GB_DRUM_GAIN);   /* (3.4.0) the hit's gain */
     if (kit < GB_KIT_SAMPLED || (kit >= GB_KIT_USR && kit < GB_KIT_SYN)) {   /* the GM sampled kit, a user slot's kit */
         memset(&v->s.dsmp, 0, sizeof v->s.dsmp);
         v->s.dsmp.smp = 1; v->s.dsmp.ended = 1; v->s.dsmp.kit = (uint8_t)(kit < GB_KIT_SAMPLED ? kit : 0);
@@ -105,7 +111,7 @@ GB_SMALL static void drum_start(gb_voice *v, const gb_patch *p, int fresh)
         v->s.dsmp.step = gb_minf(gb_exp2f(semi * (1.0f / 12.0f)) * (float)z->rate * (1.0f / 65536.0f), 8.0f);   /* (3.3.6: the zone's rate is 65536 x its rate / 44.1 kHz, as SAMPLE reads it; was / 44100: 1.49 x too fast) */
         v->s.dsmp.env = 1.0f; v->s.dsmp.denv = 1.0f;
         v->s.dsmp.dkf = ds < 0 ? kdec(DK_SMP[ds + 4]) : 1.0f;
-        v->s.dsmp.gain = vel * 1.35f * 0.5f;                       /* (as loud as the synthesised kits: their peaks, measured) */
+        v->s.dsmp.gain = lg * 2.43f;   /* (3.4.0: as loud as the synthesised kits, K-weighted (tests/level_tool.c drums); was 1.35, their peaks) */
         return;
     }
     int slot = kit_cached(kit);
@@ -146,7 +152,7 @@ GB_SMALL static void drum_start(gb_voice *v, const gb_patch *p, int fresh)
     }
     for (int i = 0; i < 6; i++) v->s.drum.minc[i] = pinc(v->s.drum.base + (float)METAL[i] * (1.0f / 16.0f));
     v->s.drum.inc = pinc(v->s.drum.base + v->s.drum.pe * (float)d->bend);
-    v->s.drum.gain = vel * gb_db((float)d->qdb * 0.25f) * 0.5f;
+    v->s.drum.gain = lg * gb_db((float)d->qdb * 0.25f);
     v->s.drum.holdn = 0; v->s.drum.held = 0.0f;
     (void)dk;
 }

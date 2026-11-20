@@ -3,7 +3,7 @@
 #include "project.h"
 
 #define PMAGIC 0x4A504247u                      /* "GBPJ" */
-#define PVERSION 16u                              /* 2: conditions, ratchets, locks, the song; 3: the effects, the
+#define PVERSION 17u                              /* 2: conditions, ratchets, locks, the song; 3: the effects, the
                                                    * presets; 4: the swing; 5: 24 sound parameters (the LFO); 6: the
                                                    * master (DUST, DUCK, the DJ filter, the punch-ins' fade) and each
                                                    * track's filter; 7: each track's DIV and GATE, its chorus
@@ -13,7 +13,9 @@
                                                    * notes, their sounds back to their engine's defaults);
                                                    * 13: the device's settings (HOME); 14: the delay's COLR and MIX,
                                                    * the reverb's DAMP, the chorus's rate; 15: the patterns' notes
-                                                   * packed (ev_pack) */
+                                                   * packed (ev_pack); 16 (4.0): each track's pattern as last
+                                                   * saved; 17 (3.4.0): nothing new, but the drum kits 3 x louder: a
+                                                   * project from before has its drums' level taken down as much */
 #define PRJ_NTRK 8                                /* the tracks a file has room for (the sequencer has SEQ_NTRK) */
 #define PRJ_NPAT 16                               /* the patterns a track of a file may have (SEQ_NPAT here) */
 _Static_assert(SEQ_NTRK <= PRJ_NTRK && PRJ_NTRK <= GB_NTRACK, "a project's tracks");
@@ -302,7 +304,8 @@ static int load_body(seq_t *q, gb_sound *s, project_extra *x, rd r, int check_on
         if (!p->unison) p->unison = 1;
         for (int i = 0; i < np; i++) { float f = clamp01(rf(&r)); if (i < GB_NPARAM) p->p[i] = f; }
         if (ver < 12) gb_patch_default(p, p->engine);   /* (another sound model: its values mean nothing here) */
-        sm_set(&k->level, clamp01(rf(&r))); sm_set(&k->pan, clamp01(rf(&r)));
+        { float lv = clamp01(rf(&r)); if (ver < 17u && p->engine == ENG_DRUM) lv *= (1.0f / 3.0f); sm_set(&k->level, lv); }   /* (3.4.0: the kits 3 x louder; a project from before as it sounded) */
+        sm_set(&k->pan, clamp01(rf(&r)));
         sm_set(&k->send_dly, clamp01(rf(&r))); sm_set(&k->send_rev, clamp01(rf(&r)));
         sm_set(&k->filt, 0.0f);
         uint32_t mu = r8(&r), qu = r8(&r), cu = r8(&r);

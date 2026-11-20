@@ -95,6 +95,12 @@ let fails = 0; const check = (c, w) => { console.log((c ? 'ok   ' : 'FAIL ') + w
   await pg.evaluate(async m => { R.t = 1; R.pt = 4; await rollLoad(); await midiImport(Uint8Array.from(m), 'e2e.mid'); }, mid);   /* (its first track: tempo only; then track 1's) */
   await pg.waitForTimeout(800);
   P = await pg.evaluate(async () => (await patRead(1, 4)).notes.length); check(P >= 1, 'SEQ: a MIDI file read into a pattern (' + P + ')');
+  /* (3.4.0, Sam: imported notes all SOFT) a file at velocity 64 and 48: the loudest brought to NORM (100), the other with it */
+  await pg.evaluate(async () => { const tk = [0, 0x90, 60, 64, 0x81, 0x40, 0x80, 60, 0, 0, 0x90, 64, 48, 0x81, 0x40, 0x80, 64, 0, 0, 0xFF, 0x2F, 0];
+    const f = [0x4D, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 0, 0, 1, 0, 96, 0x4D, 0x54, 0x72, 0x6B, 0, 0, 0, tk.length, ...tk];
+    R.t = 1; R.pt = 5; await rollLoad(); await midiImport(Uint8Array.from(f), 'soft.mid'); });
+  await pg.waitForTimeout(800);
+  P = await pg.evaluate(async () => (await patRead(1, 5)).notes.map(n => n.vel)); check(P.length === 2 && P[0] === 100 && P[1] === 75, 'SEQ: a soft MIDI file brought to NORM (' + JSON.stringify(P) + ')');
   /* SONG */
   await tab('song'); await pg.evaluate(async () => { SONG.e = [{ bar: 0, mute: 0, pat: [0, 1, 0, 0, 0] }, { bar: 4, mute: 2, pat: [1, 1, 0, 0, 0] }]; SONG.len = 8; await songSend(); }); await pg.waitForTimeout(800);
   check(await pg.evaluate(() => SONG.e.length === 2 && SONG.len === 8 && SONG.e[1].mute === 2), 'SONG: sent and read back'); await shot('song');
