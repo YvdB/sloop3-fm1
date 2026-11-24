@@ -24,6 +24,16 @@ m-bootloader)
 
 ## What's new
 
+**3.4.2: the issues.** A song changing a track's engine between patterns plays step 1 again (#24); ratchets follow
+the swing (#17); a track keeps to the beat when its DIV changes while playing (#18, #26); the arpeggiator's and the
+rolls' notes are recorded where they sound, 1/32 too (#28); each drum sound has its own LEVEL (#25); STRUM goes below
+0, from the highest note down (#30); the SEL knobs stop at their ends; the punch-in goes on while its key is held
+after FX is let go, as in 2.8.5; the keys of the track left no longer stay lit (#18, #26); the song plays from the LINE
+shown (#27); the vibes decay alike above and below F#4 (#14); the mix 6 dB louder, its peaks still limited (#16);
+CC 11 sets the level, CC 1 and CC 11 can be learnt, the keys' pressure acts as the mod wheel (#12, #21); in the
+editor, the condition and ratchet lists stay open while it plays (#31); the installer asks the FM-1 again before
+giving up (#13).
+
 **3.4.1: reliability and levels.** Two causes of freezes fixed (a message said during a long flash erase, and the
 interrupts' stack in memory the firmware reuses), a flash operation that never ends no longer stops the screen, every
 factory sound brought to the same loudness as heard (with its effects, on three keys), and the drum kits' snares,

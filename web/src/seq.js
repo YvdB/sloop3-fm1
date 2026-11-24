@@ -55,7 +55,7 @@ function drawSeq() {
   const c = card(P, L('tab_seq'), '', L('seqHelp'), 'wide');
   R.toolsEl = el('div'); c.appendChild(R.toolsEl);
   const wrap = el('div'); wrap.style.position = 'relative'; const cv = el('canvas', 'roll'); wrap.appendChild(cv); c.appendChild(wrap); R.cv = cv;
-  R.insp = el('div', 'tools'); c.appendChild(R.insp);
+  R.insp = el('div', 'tools'); R.inspKey = null; c.appendChild(R.insp);
   rollEvents(cv);
   const cards = el('div', 'cards'); cards.style.marginTop = '12px'; P.appendChild(cards);
   const tc = card(cards, L('trkSet'), '', L('trkHelp')); R.trkEl = el('div', 'knobs'); tc.appendChild(R.trkEl);
@@ -209,8 +209,14 @@ function lockAt(x, y, G) {
 }
 /* the notes selected: their values */
 function drawInspector() {
-  const I = R.insp; if (!I) return; I.innerHTML = '';
-  const S = [...R.sel]; if (!S.length) { I.appendChild(el('span', 'dim', L('noSel'))); return; }
+  const I = R.insp; if (!I) return;
+  const S = [...R.sel];
+  /* (3.4.2, issue #31: "the lists of condition and ratchet don't open") the roll is drawn again at each news of the
+   * FM-1 while it plays: the inspector only when what it shows changed, so that an open list is not taken away */
+  const key = lang + '|' + S.map(x => [x.at, x.len, x.vel, x.cond, x.rat, x.note].join(',')).join(';');
+  if (R.inspKey === key && R.inspSel && R.inspSel.length === S.length && S.every((x, i) => x === R.inspSel[i])) return;
+  R.inspKey = key; R.inspSel = S; I.innerHTML = '';
+  if (!S.length) { I.appendChild(el('span', 'dim', L('noSel'))); return; }
   const n = S[0], all = f => { snapshot(); for (const x of S) f(x); drawRoll(); rollSend(); };
   I.appendChild(el('b', '', S.length + L('sel')));
   const num = (lab, v, mn, mx, f) => { const i = el('input', 'num'); i.type = 'number'; i.min = mn; i.max = mx; i.value = v; i.onchange = () => all(x => f(x, clamp(+i.value, mn, mx))); I.append(el('span', 'dim', lab), i); };
@@ -218,7 +224,7 @@ function drawInspector() {
   if (!drumT()) num(L('len'), n.len, 12, R.P.steps * 96, (x, v) => x.len = v);
   num(L('nudge'), n.at % 96 - (n.at % 96 > 48 ? 96 : 0), -47, 48, (x, v) => { const s = Math.round((x.at - (x.at % 96 > 48 ? x.at % 96 - 96 : x.at % 96)) / 96) * 96; x.at = clamp(s + v, 0, R.P.steps * 96 - 1); });
   const cs = select(CONDS.map(c => [c, condName(c)]), n.cond || 0, v => all(x => x.cond = +v)); I.append(el('span', 'dim', L('cond')), cs);
-  const rs = select([1, 2, 3, 4].map(k => [k, '×' + k]), (n.rat || 1) & 7, v => all(x => x.rat = (x.rat & 0x30) | +v)); I.append(el('span', 'dim', L('ratchet')), rs);
+  const rs = select([1, 2, 3, 4].map(k => [k, '×' + k]), (n.rat || 1) & 7, v => all(x => x.rat = (x.rat & 0x70) | +v)); I.append(el('span', 'dim', L('ratchet')), rs);
   const flag = (lab, bit) => { const b = button(lab, () => { const on = !(n.rat & bit); all(x => x.rat = on ? (x.rat || 1) | bit : (x.rat || 1) & ~bit); }, 'sm' + (n.rat & bit ? ' on' : '')); I.appendChild(b); };
   flag(L('accent'), SEQ_ACCENT); flag(L('slide'), SEQ_SLIDE);
 }

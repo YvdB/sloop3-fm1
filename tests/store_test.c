@@ -205,7 +205,7 @@ static void project_tests(void)
     seq_step_cond(&Q1, 4, 3, SEQ_CHANCE + 3); seq_step_ratchet(&Q1, 4, 3, 3); seq_lock_set(&Q1, 4, 3, 6, 77); seq_lock_set(&Q1, 4, 3, 7, 200);
     Q1.song_n = 2; Q1.song_len = 8; Q1.song[1].bar = 4; Q1.song[1].mute = 5; Q1.song[1].pat[2] = 3;
     X1.dly_div = 5; for (int t = 0; t < SEQ_NTRK; t++) X1.preset[t] = (uint8_t)(t * 3); S1.dly_fb = 0.61f; S1.rev_fb = 0.9f; Q1.swing = 37; Q1.t[3].swing = 12; X1.harm[2][0] = 2; X1.harm[2][1] = 7; X1.harm[2][3] = 3; X1.harm[2][4] = 64 + 5;
-    S1.dust = 0.37f; S1.duck = 0.5f; sm_set(&S1.mfilt, -0.42f); X1.fade = 9; X1.strum[1] = 40; X1.vlead[2] = 1; memset(X1.home, 0xFF, sizeof X1.home); X1.home[3] = 7; X1.home[39] = 0; for (int i = 0; i < 8; i++) X1.tex[i] = (uint8_t)(i + 3); for (int i = 0; i < 4; i++) X1.fxv[i] = (uint8_t)(10 * i + 5); for (int i = 0; i < 8; i++) X1.midi[i] = (uint8_t)(i < 5 ? i % 3 : 0xFF); S1.trk[3].patch.dtune[2] = -5; S1.trk[3].patch.ddec[15] = 3; S1.trk[3].patch.dmute = 0x8001; Q1.t[2].div = SEQ_DIV_8T; Q1.t[1].gate = 60; sm_set(&S1.trk[2].send_cho, 0.4f); sm_set(&S1.trk[3].filt, 0.25f); sm_set(&S1.trk[1].filt, -1.0f);
+    S1.dust = 0.37f; S1.duck = 0.5f; sm_set(&S1.mfilt, -0.42f); X1.fade = 9; X1.strum[1] = 40; X1.vlead[2] = 1; memset(X1.home, 0xFF, sizeof X1.home); X1.home[3] = 7; X1.home[39] = 0; for (int i = 0; i < 8; i++) X1.tex[i] = (uint8_t)(i + 3); for (int i = 0; i < 4; i++) X1.fxv[i] = (uint8_t)(10 * i + 5); for (int i = 0; i < 8; i++) X1.midi[i] = (uint8_t)(i < 5 ? i % 3 : 0xFF); S1.trk[3].patch.dtune[2] = -5; S1.trk[3].patch.ddec[15] = 3; S1.trk[3].patch.ddec[14] = gb_dpack(-2, -7); S1.trk[3].patch.dmute = 0x8001; Q1.t[2].div = SEQ_DIV_8T; Q1.t[1].gate = 60; sm_set(&S1.trk[2].send_cho, 0.4f); sm_set(&S1.trk[3].filt, 0.25f); sm_set(&S1.trk[1].filt, -1.0f);
     /* each pattern's own sound: track 1's pattern 3 another cutoff and engine, the drums' pattern 6 a tune */
     for (int t = 0; t < SEQ_NTRK; t++) ps_fill(&PS1, t, 0, &S1.trk[t].patch, S1.trk[t].patch.p, 5);
     PS1.s[0][2].p[6] = 200; PS1.s[0][2].engine = ENG_FM; PS1.s[0][2].preset = -9; PS1.d[5].dtune[3] = -7; PS1.d[5].dmute = 0x0102;
@@ -237,6 +237,7 @@ static void project_tests(void)
           && S2.trk[3].filt.tgt > 0.2499f && S2.trk[3].filt.tgt < 0.2501f && S2.trk[1].filt.tgt < -0.9999f && S2.trk[0].filt.tgt == 0.0f, "the master bus or the track filters differ");
     CHECK(Q2.t[2].div == SEQ_DIV_8T && Q2.t[0].div == SEQ_DIV_16 && Q2.t[1].gate == 60 && Q2.t[0].gate == 100 && S2.trk[2].send_cho.tgt > 0.399f && S2.trk[2].send_cho.tgt < 0.401f, "DIV, GATE or the chorus differ");
     CHECK(S2.trk[3].patch.dtune[2] == -5 && S2.trk[3].patch.ddec[15] == 3 && S2.trk[3].patch.dmute == 0x8001 && S2.trk[0].patch.dtune[2] == 0, "the drums' sounds differ");
+    CHECK(GB_DDEC(S2.trk[3].patch.ddec[14]) == -2 && gb_dlev(S2.trk[3].patch.ddec[14]) == -7, "a drum sound's level (3.4.2) not kept");
     CHECK(X2.strum[1] == 40 && X2.vlead[2] == 1 && X2.strum[0] == 0, "STRUM or VLEAD differ");
     CHECK(X2.home[3] == 7 && X2.home[39] == 0 && X2.home[0] == 0xFF, "the device's settings differ");
     CHECK(X2.tex[0] == 3 && X2.tex[6] == 9, "TEXTURE differs"); CHECK(X2.fxv[0] == 5 && X2.fxv[3] == 35, "COLR MIX DAMP CRT differ");

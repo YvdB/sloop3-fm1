@@ -74,7 +74,7 @@
 #include "../hal/fm1/uart.h"
 #include "../hal/fm1/irq.h"
 
-#define VERSION "3.4.1"
+#define VERSION "3.4.2"
 /* COLD: a function of the interface, run from the flash window (fw/ram.ld .xtext); never called while the window is
  * off (a save's flash work: fw/main.c's loop runs only the sound, the panel and the flash then) */
 #ifdef HOST
@@ -252,7 +252,7 @@ static const char *const PK_NAME[PK_N] = { "1/4", "1/8", "1/16", "1/32", "STUT",
     "-LOW", "-MID", "-HIGH", "RWND", "OCT+", "FLANG", "PAN", "FREEZ", "8T", "MONO", "FADE" };
 /* the key, scale and chords of each track (SEL), the roll's rate (ARP), the click */
 static harm_cfg harm[NTRK];
-static uint8_t strum[NTRK], vlead[NTRK];    /* SEL 2/2: a chord's notes one after the other (0..100: up to 120 ms); the
+static int8_t strum[NTRK]; static uint8_t vlead[NTRK];    /* SEL 2/2: a chord's notes one after the other (0..100: up to 120 ms); the
                                                chords voiced near the one before (0/1) */
 static int roll_rate = 1;                   /* 1/8, 1/16, 1/32, 32T, 1/64 */
 RAMCONST static const uint16_t ROLL_TICKS[5] = { 192, 96, 48, 32, 24 };
@@ -289,6 +289,7 @@ static char *put_u(char *p, uint32_t v) { char t[12]; int n = 0; do { t[n++] = (
 static char *put_s(char *p, const char *s) { while (*s) *p++ = *s++; return p; }
 static char *put_i(char *p, int v) { if (v > 0) *p++ = '+'; else if (v < 0) { *p++ = '-'; v = -v; } return put_u(p, (uint32_t)v); }
 static float clamp01(float v) { return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v; }
+COLD static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 static int is_drum(int t) { return S.trk[t].patch.engine == ENG_DRUM; }
 /* a sound, as a number (a track's preset_of, a favourite): a factory sound (presets.c), US_BASE + one of your 32
  * places, and (3.2) FB_BASE + a DX7 voice of your FM6 bank (the editor's, or SLOOP 2.8's: PTCH B1..B27), which until
@@ -472,6 +473,7 @@ static void ps_follow(void)                         /* (in the audio block: the 
         PS.cur[t] = (uint8_t)cur; Q.t[t].lock_step = -1;
     }
 }
+static void sq_switched(seq_t *q, int t) { (void)q; (void)t; ps_follow(); }   /* (3.4.2, #24: before its first notes) */
 static void sound_from_base(void)                                        /* (before a save: the own values) */
 {
     for (int t = 0; t < NTRK; t++) { mix_back(t); for (int i = 0; i < GB_NPARAM; i++) S.trk[t].patch.p[i] = base[t][i]; Q.t[t].lock_step = -1; }
@@ -563,13 +565,13 @@ __attribute__((noinline)) static void render_block(int32_t *out)
         cin_ticks += (uint32_t)(Q.bpm * 4.0f * (float)SEQ_TPS / 60.0f / rate_hz * (float)GB_BLOCK + 0.5f);
         if (cin_ticks >= SEQ_BAR) { countin = 0; record_now(cin_trk); }
     }
+    ps_follow();                                         /* (3.4.2, #24: a song's start, PLAY: the sound before the notes) */
     if (Q.playing && ext_on(blk_t)) {
         /* at most twice the tempo (from the pulses' interval once known): a lag caught up, never a jump */
         uint64_t cap = MK.iv ? (uint64_t)blk_ticks * 2u * 65536u / MK.iv
                              : (uint64_t)(uint32_t)(Q.bpm * (24.0f / 60.0f) / rate_hz * (float)GB_BLOCK * 2.0f * 65536.0f);   /* (32 bits: no soft double here) */
         seq_advance_by(&Q, mclk_advance(&MK, blk_t, cap) * 16u);
     } else seq_advance(&Q, GB_BLOCK);
-    ps_follow();
     clock_out_block();
     roll_step();
     arp_step();
@@ -627,7 +629,7 @@ COLD static void new_project(int with_loop)
 {
     dm_live = 0;                                           /* (the live mutes: a performance's, not the project's) */
     seq_init(&Q, rate_hz, 92.0f, &HIST);
-    Q.note_on = sq_on; Q.note_off = sq_off; Q.locks = sq_locks;
+    Q.note_on = sq_on; Q.note_off = sq_off; Q.locks = sq_locks; Q.switched = sq_switched;
     for (int t = 0; t < NTRK; t++) Q.t[t].quant = 100;   /* (3.3.7) a take on the steps, as SLOOP 2.8 recorded (QUANT OFF: as played) */
     static const float LVL[NTRK] = { 0.45f, 0.45f, 0.45f, 0.45f, 0.45f };   /* (4.0.11, Sam: the 4 synths at the same level; 3.4.0: the drums too, their kits louder (engine/drum.c); the sounds' own levels: presets.c) */
     /* SLOOP's: 808 BOOM, RHODES, LOFI FLUTE (SAMPLE); the kit; a pad on track 5 (SLOOP's engine order, place) */
@@ -1651,8 +1653,9 @@ COLD static void fill_view(ui_view *v)
             int n = last_note & 15; const gb_patch *dp = &S.trk[trk].patch;
             knob(v, 0, "SOUND", PAD[n], n * 100 / 15, 0);
             *put_i(b, dp->dtune[n]) = 0; knob(v, 1, "TUNE", b, (dp->dtune[n] + 8) * 100 / 15, 0);
-            *put_i(b, dp->ddec[n]) = 0; knob(v, 2, "DEC", b, (dp->ddec[n] + 4) * 100 / 7, 0);
-            knob_n(v, 3, "LEVEL", level_of(trk), level_of(trk));   /* (4.0: as SLOOP 2.8.5) */
+            *put_i(b, GB_DDEC(dp->ddec[n])) = 0; knob(v, 2, "DEC", b, (GB_DDEC(dp->ddec[n]) + 4) * 100 / 7, 0);
+            { int dl = gb_dlev(dp->ddec[n]); char *e = put_i(b, dl); *e++ = 'D'; *e++ = 'B'; *e = 0;   /* (3.4.2, #25) the sound's own level */
+              knob(v, 3, "LEVEL", b, (dl - GB_DLEV_MIN) * 100 / (GB_DLEV_MAX - GB_DLEV_MIN), 0); }
             v->dpage = 2;
         } else if (pg == PG_SEL && !is_drum(trk)) {             /* (4.0, as SLOOP 2.8.5) SEL: ROOT SCL QNT CHORD of this track */
             const harm_cfg *h = &harm[trk];
@@ -1666,8 +1669,9 @@ COLD static void fill_view(ui_view *v)
             if (is_drum(trk)) for (int i = 0; i < 4; i++) v->knob[i].label = 0;
             else {
                 *put_i(b, harm[trk].transpose) = 0; knob(v, 0, "TRANS", b, 50 + harm[trk].transpose * 50 / 24, 0);
-                int ms = strum[trk] * 120 / 100; *put_s(put_u(b, (uint32_t)ms), "ms") = 0;
-                knob(v, 1, "STRUM", strum[trk] ? b : "OFF", strum[trk], 0);
+                /* (3.4.2, issue #30) < 0: from the highest note down, as 2.8.5; the spread in ms, always the same way */
+                *put_i(b, strum[trk] * 120 / 100) = 0;
+                knob(v, 1, "STRUM", strum[trk] ? b : "OFF", 50 + strum[trk] / 2, 0);
                 knob(v, 2, "VLEAD", vlead[trk] ? "ON" : "OFF", vlead[trk] * 100, 0);
                 v->knob[3].label = 0;
             }
@@ -2207,7 +2211,7 @@ static void arp_step(void)                                  /* in the audio bloc
     if (m && (c->prob >= 100 || (A.rnd >> 9) % 100u < c->prob)) {
         for (int i = 0; i < m; i++) {
             play_on(GB_OWNER(OWN_ARP, 0), A.trk, out[i], (float)vel * (1.0f / 127.0f));
-            if (Q.recording && A.trk == Q.rec_trk) seq_key(&Q, out[i], vel, 1, 0);
+            if (Q.recording && A.trk == Q.rec_trk) { Q.rec_free = 1; seq_key(&Q, out[i], vel, 1, 0); Q.rec_free = 0; }   /* (3.4.2, #28: on the arp's grid) */
             A.snd[i] = out[i];
         }
         A.nsnd = (uint8_t)m;
@@ -2271,9 +2275,11 @@ static void key_on(int k, int t, const uint8_t *n, int nn, float vel, uint32_t l
     }
     for (int i = 0; i < nn; i++) {
         key_notes[k][i] = n[i];
-        if (i && t < NTRK && strum[t] && !is_drum(t)) {      /* STRUM: later, in turn */
+        int sr = t < NTRK && strum[t] < 0 ? nn - 1 - i : i;   /* (3.4.2, #30: STRUM < 0, the highest note first) */
+        if (sr && t < NTRK && strum[t] && !is_drum(t)) {     /* STRUM: later, in turn */
+            uint32_t sa = (uint32_t)(strum[t] < 0 ? -strum[t] : strum[t]);
             for (int j = 0; j < 8; j++) if (!st_q[j].on) { st_q[j].on = 1; st_q[j].key = (uint8_t)k; st_q[j].note = n[i]; st_q[j].trk = (uint8_t)t; st_q[j].vel = key_vel[k];
-                st_q[j].at = st_clock + (uint32_t)i * (uint32_t)strum[t] * 53u / (uint32_t)(nn > 1 ? nn - 1 : 1); break; }   /* (120 ms at 100) */
+                st_q[j].at = st_clock + (uint32_t)sr * sa * 53u / (uint32_t)(nn > 1 ? nn - 1 : 1); break; }   /* (120 ms at 100) */
             continue;
         }
         play_on(o, t, n[i], vel);
@@ -2301,7 +2307,7 @@ static void roll_step(void)
         uint8_t n[5]; int nn = key_nn[k]; float vel = (float)key_vel[k] * (1.0f / 127.0f);
         for (int i = 0; i < nn; i++) n[i] = key_notes[k][i];
         int t = key_trk[k];
-        out_seq = 1; key_off(k, 0); key_on(k, t, n, nn, vel, 0); out_seq = 0;
+        out_seq = 1; Q.rec_free = 1; key_off(k, 0); key_on(k, t, n, nn, vel, 0); Q.rec_free = 0; out_seq = 0;   /* (3.4.2, #28: on the roll's grid) */
         if ((int32_t)(now - roll[k].next) >= 0) roll[k].next += ((now - roll[k].next) / iv + 1u) * iv;   /* (3.3: at once, as the arp's) */
     }
 }
@@ -2450,7 +2456,9 @@ COLD static void ml_knob(int t, int code)               /* a value turned while 
     if (!ml_pick || ml_trk != t || ml_code != code) { char b[24], c[32], *p; ml_label(t, code, b); p = put_s(c, b); p = put_s(p, ": SEND A CC"); *p = 0; say(c); }
     ml_pick = 1; ml_trk = (uint8_t)t; ml_code = (uint8_t)code;
 }
-static int ml_free_cc(int cc) { return cc && cc < 120 && cc != 1 && cc != 6 && cc != 11 && cc != 32 && cc != 38 && cc != 64 && (cc < 96 || cc > 101); }
+/* (3.4.2, issues #12, #21) the mod wheel (CC 1, and the keys' pressure with it) and EXPRESSION (CC 11) may be learnt too:
+ * to any value of any track, in place of what they do by themselves (CC 1 the vibrato, CC 11 the level) */
+static int ml_free_cc(int cc) { return cc && cc < 120 && cc != 6 && cc != 32 && cc != 38 && cc != 64 && (cc < 96 || cc > 101); }
 COLD static int ml_count(void) { int n = 0; for (int i = 0; i < ML_N; i++) n += ml_tab[i] != 0; return n; }
 COLD static int ml_cc(int cc, int val)                  /* a CC: learned now, or a learned one's job done (1) */
 {
@@ -2540,6 +2548,7 @@ COLD static void select_track(int t)
 {
     if (t < 0 || t >= NTRK || t == trk) return;
     trk = t; page = 0; lock_param = is_drum(trk) ? 0 : SP_E4;
+    lit_on = 0; lit_hit = 0;                          /* (3.4.2, issues #18, #26: the track left's notes were left lit) */
     if (!Q.recording) return;
     seq_record(&Q, 0, trk);
     char b[24], *p;
@@ -2590,6 +2599,7 @@ COLD static void midi_in(const midi_msg *m, uint32_t now)
     case 0xB0: midi_control(ch, t, m->d1, m->d2); break;
     case 0xE0: S.trk[t].bend = (float)((int)(m->d2 << 7 | m->d1) - 8192) * ((float)m_bend / 8192.0f); break;
     case 0xC0: midi_program(t, m->d1, ch_bank[ch]); break;
+    case 0xD0: if (!ml_on && !ml_cc(1, m->d1)) midi_control(ch, t, 1, m->d1); break;   /* (3.4.2, #12) the keys' pressure: as the mod wheel */
     default: break;
     }
 }
@@ -3024,7 +3034,7 @@ COLD static void ed_request(void)
         case 9: if (a < NTRK && a != trk) select_track(a); break;
         case 10: if (a < NTRK) { int k = b | c << 8; if (k >= UK_BASE) apply_ukit(a, k - UK_BASE); else if (k >= FB_BASE) apply_bank(a, k - FB_BASE); else if (k >= US_BASE) { if (!is_drum(a)) apply_user(a, k - US_BASE); } else if (k < gb_npresets && (gb_presets[k].kind == K_KIT) == is_drum(a)) apply_preset(a, k); } break;
         case 11: { int dt = -1; for (int t = 0; t < NTRK; t++) if (is_drum(t)) dt = t;      /* a drum pad's TUNE, DECAY */
-                 if (dt >= 0 && a < 16) { gb_patch *p = &S.trk[dt].patch; int tu = (int8_t)b, de = (int8_t)c; p->dtune[a] = (int8_t)(tu < -8 ? -8 : tu > 7 ? 7 : tu); p->ddec[a] = (int8_t)(de < -4 ? -4 : de > 3 ? 3 : de); } } break;
+                 if (dt >= 0 && a < 16) { gb_patch *p = &S.trk[dt].patch; int tu = (int8_t)b, de = (int8_t)c; p->dtune[a] = (int8_t)(tu < -8 ? -8 : tu > 7 ? 7 : tu); p->ddec[a] = gb_dpack(de, gb_dlev(p->ddec[a])); } } break;   /* (3.4.2: its level kept) */
         case 12: ed_thr = (uint8_t)(a & 3u); break;                                                        /* the throws */
         case 13: { int bp = a | b << 8; if (bp >= 300 && bp <= 3000) seq_set_bpm(&Q, (float)bp * 0.1f); if (c <= 100) Q.swing = (uint8_t)c; } break;
         case 14: if (a <= 100) S.dust = (float)a * 0.01f; if (b <= 100) S.duck = (float)b * 0.01f; if (c <= 200) sm_set(&S.mfilt, ((float)c - 100.0f) * 0.01f); break;
@@ -3060,7 +3070,7 @@ COLD static void ed_request(void)
         }
         {   /* the drum pads' TUNE (+8) and DECAY (+4), a nibble each */
             int dt = -1; for (int t = 0; t < NTRK; t++) if (is_drum(t)) dt = t;
-            for (int i = 0; i < 16; i++) q[i] = dt < 0 ? 0x84 : (uint8_t)((S.trk[dt].patch.dtune[i] + 8) << 4 | (S.trk[dt].patch.ddec[i] + 4));
+            for (int i = 0; i < 16; i++) q[i] = dt < 0 ? 0x84 : (uint8_t)((S.trk[dt].patch.dtune[i] + 8) << 4 | (GB_DDEC(S.trk[dt].patch.ddec[i]) + 4));
         }
         r[0] = (uint8_t)op;
         ed_send(cmd, 1 + 45 + 22 * NTRK + 16); return;
@@ -3448,8 +3458,10 @@ COLD static void keys(void)
         if (L & (1u << BTN_SAVE)) {                          /* SONG */
             layer_used = 1;
             if (w == 12 || k == 3) {
-                seq_song_play(&Q, !Q.song_play);
-                if (Q.song_play) { if (Q.song_n) say("SONG ON THE BAR"); else say_bad("NO SONG: REC"); } else say("LOOP");
+                /* (3.4.2, issue #27) on the SONG pages: from the LINE shown (to hear an edit), then round to line 1 */
+                int from = (sticky == PG_SONG || sticky == PG_SONG2) ? sg_cur : 0;
+                seq_song_play_from(&Q, !Q.song_play, from);
+                if (Q.song_play) { if (!Q.song_n) say_bad("NO SONG: REC"); else if (Q.song_from) { char b[28]; *put_u(put_s(b, "SONG FROM LINE "), (uint32_t)from + 1u) = 0; say(b); } else say("SONG ON THE BAR"); } else say("LOOP");
                 continue;
             }
             if (w == 13 || k == 1) {
@@ -3594,7 +3606,8 @@ COLD static void buttons(void)
     if (!lay_on(BTN_EDIT) && hold_step < 0 && sticky != PG_NOTES) Q.batch = 0;   /* (an ERASE hold: one undo; NOTES: a note) */
     if (!lay_on(BTN_GLO) && Q.fill) seq_fill(&Q, 0);
     if (!lay_on(BTN_SAVE)) ctap_n = 0;                               /* (4.0) the chain's taps: one SAVE hold */
-    if (!lay_on(BTN_FX) && punch_key >= 0) { punch_key = -1; snd_punch(&S, -1); }
+    /* (3.4.2, issue #18, as 2.8.5) FX let go before the key: the punch-in goes on until the key is let go */
+    if (!lay_on(BTN_FX) && punch_key >= 0 && !(((panel_keys() | ek_held) >> punch_key) & 1u)) { punch_key = -1; snd_punch(&S, -1); }
     /* the throws: FX + OCT- every reverb send full, FX + OCT+ every delay send (and its repeats), while held */
     sm_set(&S.throw_rev, (lay_on(BTN_FX) && (held_btn & (1u << BTN_OCT_DOWN))) || (ed_thr & 1u) ? 1.0f : 0.0f);
     sm_set(&S.throw_dly, (lay_on(BTN_FX) && (held_btn & (1u << BTN_OCT_UP))) || (ed_thr & 2u) ? 1.0f : 0.0f);
@@ -4076,10 +4089,11 @@ COLD static void encoders(void)
             /* (4.0, as SLOOP 2.8.5) held: CHORD, SCALE (every synth track), KEYS, TRANSPOSE (the key: a key pressed);
              * the SEL page: ROOT, SCL, QNT (the keys), CHORD of this track */
             int fk = layer ? (kn == 0 ? 2 : kn == 1 ? 1 : kn == 2 ? 3 : 4) : (kn == 0 ? 0 : kn == 1 ? 1 : kn == 2 ? 3 : 2);
-            if (fk == 0) { int r = (h->root + d + 48) % 12; harm[trk].root = (uint8_t)r; }
-            if (fk == 1) { int sc = (h->scale + d + SCALE_N * 4) % SCALE_N; for (int t = 0; t < NTRK; t++) if (!is_drum(t) && (layer || t == trk)) harm[t].scale = (uint8_t)sc; }
-            if (fk == 2) h->chord = (uint8_t)((h->chord + d + CH_N * 4) % CH_N);
-            if (fk == 3) h->keys = (uint8_t)((h->keys + d + KEYS_N * 4) % KEYS_N);
+            /* (3.4.2, issue #18) each stops at its first and last value, as the other knobs (they went round) */
+            if (fk == 0) harm[trk].root = (uint8_t)clampi(h->root + d, 0, 11);
+            if (fk == 1) { int sc = clampi(h->scale + d, 0, SCALE_N - 1); for (int t = 0; t < NTRK; t++) if (!is_drum(t) && (layer || t == trk)) harm[t].scale = (uint8_t)sc; }
+            if (fk == 2) h->chord = (uint8_t)clampi(h->chord + d, 0, CH_N - 1);
+            if (fk == 3) h->keys = (uint8_t)clampi(h->keys + d, 0, KEYS_N - 1);
             if (fk == 4) { int tr = h->transpose + d; h->transpose = (int8_t)(tr < -24 ? -24 : tr > 24 ? 24 : tr); }
             continue;
         }
@@ -4317,16 +4331,16 @@ COLD static void encoders(void)
             gb_patch *dp = &S.trk[trk].patch; int n = last_note & 15;
             if (kn == 0) shown_note(((last_note & 15) + d + 16) % 16);
             if (kn == 1) { int t2 = dp->dtune[n] + d; dp->dtune[n] = (int8_t)(t2 < -8 ? -8 : t2 > 7 ? 7 : t2); }
-            if (kn == 2) { int t2 = dp->ddec[n] + d; dp->ddec[n] = (int8_t)(t2 < -4 ? -4 : t2 > 3 ? 3 : t2); }
-            if (kn == 3) { gb_smooth *l = &S.trk[trk].level; sm_set(l, clamp01(l->tgt + 0.01f * (float)da)); }   /* (4.0: the drums' level, as SLOOP 2.8.5) */
-            if (hs[HS_DPREV] && kn <= 2) { int m = last_note & 15; play_on(GB_OWNER(OWN_PREVIEW, 0), trk, m, 0.8f); play_off(GB_OWNER(OWN_PREVIEW, 0), trk, m); }   /* (DRUM PREVIEW: heard) */
+            if (kn == 2) dp->ddec[n] = gb_dpack(GB_DDEC(dp->ddec[n]) + d, gb_dlev(dp->ddec[n]));
+            if (kn == 3) dp->ddec[n] = gb_dpack(GB_DDEC(dp->ddec[n]), gb_dlev(dp->ddec[n]) + d);   /* (3.4.2, issue #25: this sound alone; the kit's level: MIX) */
+            if (hs[HS_DPREV]) { int m = last_note & 15; play_on(GB_OWNER(OWN_PREVIEW, 0), trk, m, 0.8f); play_off(GB_OWNER(OWN_PREVIEW, 0), trk, m); }   /* (DRUM PREVIEW: heard) */
             if (e == ENC_PRESETS) choose_preset(d);
             continue;
         }
         if (pg == PG_SEL2) {
             if (e == ENC_SELECT) { sticky = d < 0 ? PG_SEL : PG_SEL2; continue; }
             if (!is_drum(trk) && kn == 0) { int tr = harm[trk].transpose + d; harm[trk].transpose = (int8_t)(tr < -24 ? -24 : tr > 24 ? 24 : tr); }
-            if (!is_drum(trk) && kn == 1) { int x = strum[trk] + 2 * da; strum[trk] = (uint8_t)(x < 0 ? 0 : x > 100 ? 100 : x); }
+            if (!is_drum(trk) && kn == 1) { int x = strum[trk] + 2 * da; strum[trk] = (int8_t)(x < -100 ? -100 : x > 100 ? 100 : x); }
             if (!is_drum(trk) && kn == 2) vlead[trk] = (uint8_t)(d > 0);
             if (e == ENC_PRESETS) choose_preset(d);
             continue;
@@ -4573,7 +4587,7 @@ COLD static int save_now(void)
 COLD __attribute__((noinline)) static void boot_flash(void)
 {
     /* the projects: SPI0 taken from the flash window (we run from RAM), the last project back */
-    smp_bank_set((const uint8_t *)(uintptr_t)(FLASH_WIN + 0x44800u));   /* the sample bank (flash 0x48800 since 4.0.2, tools/mkfw.py BANK_AT), checked once */
+    smp_bank_set((const uint8_t *)(uintptr_t)(FLASH_WIN + 0x45400u));   /* the sample bank (flash 0x49400 since 3.4.2, tools/mkfw.py BANK_AT), checked once */
     BOOT_STEP(8);
     flash_ok = flash_open() == 0;
     if (flash_ok) {
@@ -4739,7 +4753,7 @@ COLD __attribute__((noinline)) static void start(uint32_t arg)
     BOOT_STEP(5);
     if (c1 == 0 && cpu1_core_id() == 1u) two = 1;
     for (int k = 0; k < FM6_NBANK; k++) fb_nm[k][0] = 0;
-    snd_init(&S, fxmem, pmem);
+    snd_init(&S, fxmem, pmem); S.mix_gain = 2.0f;   /* (3.4.2, issue #16: 6 dB up before the limiter) */
     float rate = (float)AUDIO_RATE_NUM / (float)AUDIO_RATE_DEN;
     rate_hz = rate;
     demo_song song;

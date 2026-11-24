@@ -79,6 +79,11 @@ let fails = 0; const check = (c, w) => { console.log((c ? 'ok   ' : 'FAIL ') + w
   await pg.mouse.click(cb.x + 58 + 30, cb.y + 100); await pg.waitForTimeout(200); await pg.mouse.click(cb.x + 58 + 200, cb.y + 60); await pg.waitForTimeout(800);
   let P = await pg.evaluate(async () => (await patRead(R.t, 5)).notes.length); check(P === 2, 'SEQ: two notes drawn, on the FM-1 (' + P + ')');
   await pg.evaluate(() => { R.sel = new Set([R.P.notes[0]]); drawInspector(); });
+  /* (3.4.2, issue #31: the condition and ratchet lists closed at once) while it plays the roll is drawn again at each
+   * news from the FM-1: the inspector's lists stay the same elements (an open one stays open) */
+  { const same = await pg.evaluate(async () => { const s0 = R.insp.querySelector('select'); await live(5, 2); await new Promise(r => setTimeout(r, 1500));
+      const s1 = R.insp.querySelector('select'), playing = LV && LV.playing; await live(5, 2); return !!s0 && s0 === s1 && s0.isConnected; });
+    check(same, 'SEQ: the inspector\'s lists stay while it plays (#31)'); }
   await pg.evaluate(() => { const n = R.P.notes[0]; snapshot(); n.cond = 0x45; n.rat = 3 | SEQ_ACCENT; R.P.locks = [{ step: 1, param: 48, value: 99 }]; rollSend(true); }); await pg.waitForTimeout(900);
   P = await pg.evaluate(async () => await patRead(R.t, 5)); check(P.notes.some(n => n.cond === 0x45 && n.rat === (3 | 0x20)) && P.locks.length === 1 && P.locks[0].value === 99, 'SEQ: condition, ratchet, accent and a lock on the FM-1');
   await pg.evaluate(() => { snapshot(); R.P.notes = []; R.P.locks = []; rollSend(true); }); await pg.waitForTimeout(700);

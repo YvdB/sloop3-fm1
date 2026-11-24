@@ -376,7 +376,7 @@ en: {
   mb: 'm-bootloader ', stage: ' (RAM stage)', key: ', chip key 0x', badpkg: 'The package does not check out ({e}). Nothing is sent.',
   fwready: 'Connected. SLOOP 3 is ready for this FM-1 ({n} bytes, encrypted for its chip).',
   devMeta: 'm-bootloader {v} · chip key {k} · flash {f}',
-  noans: 'The FM-1 does not answer.', noansFix: 'Switch it off, then on while holding PLAY, choose MIDI MODE, and click Connect again.',
+  noans: 'The FM-1 does not answer.', noansFix: 'Switch it off, then on while holding PLAY, choose MIDI MODE, and click Connect again. Still nothing: close what else may be using MIDI (another tab with the editor or this page, M-Flasher, a music program), or quit the browser completely and open this page again; Edge works too.',
   inst: 'Installing... Do not unplug the FM-1 and keep this tab in front.', check: 'Checking the package', write: 'Writing SLOOP 3',
   done: 'Installed! The FM-1 restarts on SLOOP 3.',
   refused: 'The FM-1 refused the package (code {c}).', intact: ' Nothing was written: the FM-1 is as it was.', refusedFix: 'Switch it off and on in MIDI MODE, reload this page and try again. If it happens again, tell us the code.',
@@ -400,7 +400,7 @@ fr: {
   mb: 'm-bootloader ', stage: ' (en RAM)', key: ', clé de la puce 0x', badpkg: 'Le paquet n\'est pas valide ({e}). Rien n\'est envoyé.',
   fwready: 'Connecté. SLOOP 3 est prêt pour ce FM-1 ({n} octets, chiffrés pour sa puce).',
   devMeta: 'm-bootloader {v} · clé de la puce {k} · flash {f}',
-  noans: 'Le FM-1 ne répond pas.', noansFix: 'Éteins-le, puis rallume-le en tenant PLAY, choisis MIDI MODE, et clique de nouveau sur Connecter.',
+  noans: 'Le FM-1 ne répond pas.', noansFix: 'Éteins-le, puis rallume-le en tenant PLAY, choisis MIDI MODE, et clique de nouveau sur Connecter. Toujours rien : ferme ce qui peut utiliser le MIDI (un autre onglet avec l\'éditeur ou cette page, M-Flasher, un logiciel de musique), ou quitte complètement le navigateur et rouvre cette page ; Edge marche aussi.',
   inst: 'Installation... Ne débranche pas le FM-1 et garde cet onglet au premier plan.', check: 'Vérification du paquet', write: 'Écriture de SLOOP 3',
   done: 'Installé ! Le FM-1 redémarre sur SLOOP 3.',
   refused: 'Le FM-1 a refusé le paquet (code {c}).', intact: ' Rien n\'a été écrit : le FM-1 est comme avant.', refusedFix: 'Éteins-le et rallume-le en MIDI MODE, recharge cette page et réessaie. Si ça recommence, donne-nous le code.',
@@ -627,8 +627,10 @@ async function tryPort() {
   for (const [o, i] of cs) {
     attach(o, i);
     state = 'asking'; clearTimeout(hintT); show('err3', false); show('waiting', false); say(T.found + out.name + T.reading);
-    out.send(frame(0x12, []));
-    for (let w = 0; w < 30 && state === 'asking'; w++) await new Promise(r => setTimeout(r, 50));
+    /* (3.4.2, issue #13: "Chrome never connects, Edge at once") the ports opened before the first word (a send on a port
+     * still opening can be lost), and the question asked again every half second, 4 times */
+    try { await i.open(); await o.open(); } catch (e) {}
+    for (let w = 0; w < 40 && state === 'asking'; w++) { if (w % 10 === 0) out.send(frame(0x12, [])); await new Promise(r => setTimeout(r, 50)); }
     if (state !== 'asking') { probing = false; return true; }          /* (it answered: ready, or refused) */
   }
   probing = false;

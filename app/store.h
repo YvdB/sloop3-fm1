@@ -4,7 +4,7 @@
  * back and its CRC found right. A bank counts only with its header and its CRC right, so a cut at any byte leaves
  * the version before. The flash work is started and polled (store_step), between two audio halves: the sound never
  * waits.
- * The flash (the final version's map, docs/PLAN-FINAL.md): the firmware from 0x4000, the sample bank at 0x48800 (4.0.1; 0x48000 from 3.3.1)
+ * The flash (the final version's map, docs/PLAN-FINAL.md): the firmware from 0x4000, the sample bank at 0x49400 (3.4.2; 0x48800 from 4.0.1, 0x48000 from 3.3.1)
  * (both in the application area: the installer writes them), the projects [0x7A000, 0x95000); SLOOP 2.8's data
  * (0x97000 .. 0xFFFFF: its projects, samples, user presets, settings) is never written: going back to SLOOP 2.8
  * loses nothing, and SLOOP 3 imports its projects. */
@@ -12,7 +12,7 @@
 #include <stdint.h>
 
 #define STORE_BASE 0x7A000u
-#define STORE_APP_MAX (0x48800u - 0x4000u)       /* the firmware must end below the sample bank (4.0.1: 0x48800; 3.3.1: 0x48000; 0x4B778 from 3.1.6) */
+#define STORE_APP_MAX (0x49400u - 0x4000u)       /* the firmware must end below the sample bank (3.4.2: 0x49400; 4.0.1: 0x48800; 3.3.1: 0x48000; 0x4B778 from 3.1.6) */
 #define STORE_SLOTS 8
 #define STORE_AREAS 9
 #define STORE_COPY 0x3000u                       /* 12 KB: three sectors */

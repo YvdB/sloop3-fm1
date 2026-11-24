@@ -113,7 +113,7 @@ static int ev_unpack(rd *r, seq_pat *p, uint32_t n)      /* 0: n notes read, eac
         if (!p) continue;                             /* (the dry run: read, checked, not kept) */
         seq_ev *v = &p->ev[e];
         v->tick = (uint16_t)t; v->len = (uint16_t)len; v->note = (uint8_t)note; v->vel = (uint8_t)(vel & 127u); v->cond = (uint8_t)cond;
-        uint32_t rn = rat & 7u; v->ratchet = (uint8_t)((rn < 1 ? 1 : rn > 4 ? 4 : rn) | (rat & 0x30u));
+        uint32_t rn = rat & 7u; v->ratchet = (uint8_t)((rn < 1 ? 1 : rn > 4 ? 4 : rn) | (rat & 0x70u));   /* (3.4.2: SEQ_FREE kept) */
     }
     return 0;
 }
@@ -177,7 +177,7 @@ static void save_body(wr *wp, const seq_t *q, const gb_sound *s, const project_e
         w16(&w, p->dmute);
     }
     /* 9 */
-    for (int t = 0; t < PRJ_NTRK; t++) { w8(&w, x && t < SEQ_NTRK ? x->strum[t] : 0u); w8(&w, x && t < SEQ_NTRK ? x->vlead[t] : 0u); }
+    for (int t = 0; t < PRJ_NTRK; t++) { w8(&w, x && t < SEQ_NTRK ? (uint8_t)x->strum[t] : 0u); w8(&w, x && t < SEQ_NTRK ? x->vlead[t] : 0u); }
     /* 10 */
     for (int i = 0; i < 8; i++) w8(&w, x ? x->midi[i] : 0u);
     /* 11: each pattern's own sound, where it is not the current pattern's (that one: the track's, above) */
@@ -335,7 +335,7 @@ static int load_body(seq_t *q, gb_sound *s, project_extra *x, rd r, int check_on
             p->ev[e].tick = (uint16_t)r16(&r); p->ev[e].len = (uint16_t)r16(&r);
             p->ev[e].note = (uint8_t)(r8(&r) & 127u); p->ev[e].vel = (uint8_t)(r8(&r) & 127u);
             p->ev[e].cond = (uint8_t)(ver >= 2 ? r8(&r) : SEQ_ALWAYS);
-            uint32_t ra = ver >= 2 ? r8(&r) : 1u, rn = ra & 7u; p->ev[e].ratchet = (uint8_t)((rn < 1 ? 1 : rn > 4 ? 4 : rn) | (ra & 0x30u));   /* (+ ACCENT, SLIDE) */
+            uint32_t ra = ver >= 2 ? r8(&r) : 1u, rn = ra & 7u; p->ev[e].ratchet = (uint8_t)((rn < 1 ? 1 : rn > 4 ? 4 : rn) | (ra & 0x70u));   /* (+ ACCENT, SLIDE) */
         }
         for (int l = 0; l < p->nlock; l++) { p->lk[l].step = (uint8_t)r8(&r); p->lk[l].param = (uint8_t)(r8(&r) & 63u); p->lk[l].value = (uint8_t)r8(&r); }
         if (ver < 12) p->nlock = 0;                   /* (locks of another sound model) */
@@ -399,14 +399,14 @@ static int load_body(seq_t *q, gb_sound *s, project_extra *x, rd r, int check_on
         if (ver < 8) continue;
         for (int i = 0; i < 16; i++) {
             int a = (int8_t)r8(&r), b = (int8_t)r8(&r);
-            p->dtune[i] = (int8_t)(a < -8 ? -8 : a > 7 ? 7 : a); p->ddec[i] = (int8_t)(b < -4 ? -4 : b > 3 ? 3 : b);
+            p->dtune[i] = (int8_t)(a < -8 ? -8 : a > 7 ? 7 : a); p->ddec[i] = gb_dpack(GB_DDEC(b), gb_dlev((int8_t)b));   /* (3.4.2: its level above) */
         }
         p->dmute = (uint16_t)r16(&r);
     }
     if (x) { memset(x->strum, 0, sizeof x->strum); memset(x->vlead, 0, sizeof x->vlead); }
     if (ver >= 9) for (int t = 0; t < PRJ_NTRK; t++) {
         uint32_t a = r8(&r), b = r8(&r);
-        if (x && t < SEQ_NTRK) { x->strum[t] = (uint8_t)(a > 100 ? 100 : a); x->vlead[t] = (uint8_t)(b != 0); }
+        if (x && t < SEQ_NTRK) { { int sa = (int8_t)a; x->strum[t] = (int8_t)(sa < -100 ? -100 : sa > 100 ? 100 : sa); } x->vlead[t] = (uint8_t)(b != 0); }
     }
     if (x) memset(x->midi, 0xFF, sizeof x->midi);   /* (0xFF: none kept, an older project) */
     if (ver >= 10) for (int i = 0; i < 8; i++) { uint32_t a = r8(&r); if (x) x->midi[i] = (uint8_t)a; }
@@ -448,7 +448,7 @@ static int load_body(seq_t *q, gb_sound *s, project_extra *x, rd r, int check_on
             for (int e = 0; e < k->n; e++) {
                 k->ev[e].tick = (uint16_t)r16(&r); k->ev[e].len = (uint16_t)r16(&r);
                 k->ev[e].note = (uint8_t)(r8(&r) & 127u); k->ev[e].vel = (uint8_t)(r8(&r) & 127u); k->ev[e].cond = (uint8_t)r8(&r);
-                uint32_t ra = r8(&r), rn = ra & 7u; k->ev[e].ratchet = (uint8_t)((rn < 1 ? 1 : rn > 4 ? 4 : rn) | (ra & 0x30u));
+                uint32_t ra = r8(&r), rn = ra & 7u; k->ev[e].ratchet = (uint8_t)((rn < 1 ? 1 : rn > 4 ? 4 : rn) | (ra & 0x70u));
             }
             for (int l = 0; l < k->nlock; l++) { k->lk[l].step = (uint8_t)r8(&r); k->lk[l].param = (uint8_t)(r8(&r) & 63u); k->lk[l].value = (uint8_t)r8(&r); }
             for (int a = 1; a < k->n; a++) { seq_ev ea = k->ev[a]; int b = a; while (b > 0 && k->ev[b - 1].tick > ea.tick) { k->ev[b] = k->ev[b - 1]; b--; } k->ev[b] = ea; }

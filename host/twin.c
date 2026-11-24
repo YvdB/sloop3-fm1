@@ -746,7 +746,7 @@ static void sc_import(void)
 /* MIDI from a computer: notes in, the clock (SYNC EXT), program changes, the notes the sequencer sends out */
 static void midi_send(uint8_t a, uint8_t b, uint8_t c)
 {
-    uint8_t m[3] = { a, b, c }, pk[4]; int n = a >= 0xF8 ? 1 : (a & 0xF0) == 0xC0 ? 2 : 3;
+    uint8_t m[3] = { a, b, c }, pk[4]; int n = a >= 0xF8 ? 1 : (a & 0xF0) == 0xC0 || (a & 0xF0) == 0xD0 ? 2 : 3;
     midi_usb_packet(m, n, pk); tw_usb_put_in(pk);
 }
 static uint32_t out_count(uint8_t status_hi, int drain)
@@ -809,6 +809,76 @@ static void sc_midi(void)
     midi_send(0xB0, 123, 0); for (int c = 0; c < 16; c++) midi_send((uint8_t)(0xB0 | c), 123, 0);
     wait_ms(3000);
     check_project_roundtrip("after MIDI");
+}
+/* (3.4.2, Sam: "confirm every track works with MIDI, and the rest of the MIDI system, before publishing") on each of the
+ * 5 tracks' channels: CC 7 and CC 11 the level, CC 10 the pan, the sends, the bend, the sustain pedal, a program change
+ * (the drums: a kit); MIDI LEARN of CC 1 and CC 11 and the keys' pressure; the sequencer's notes out on each track's
+ * channel; REMOTE (PLAY) and the FX channel (a punch-in) */
+static void sc_midi2(void)
+{
+    boot_wait(); wait_ms(500);
+    static const int CH[5] = { 0, 1, 2, 3, 9 }, TK[5] = { 0, 1, 2, 4, 3 };
+    for (int i = 0; i < 5; i++) {
+        int c = CH[i], t = TK[i]; gb_track *k = &S.trk[t];
+        midi_send((uint8_t)(0xB0 | c), 7, 20); wait_ms(150); float l7 = k->level.tgt;
+        midi_send((uint8_t)(0xB0 | c), 11, 100); wait_ms(150); float l11 = k->level.tgt;
+        midi_send((uint8_t)(0xB0 | c), 10, 0); wait_ms(100); float pan = k->pan.tgt;
+        midi_send((uint8_t)(0xB0 | c), 91, 127); midi_send((uint8_t)(0xB0 | c), 94, 64); wait_ms(100); float rev = k->send_rev.tgt, dly = k->send_dly.tgt;
+        midi_send((uint8_t)(0xB0 | c), 10, 64); midi_send((uint8_t)(0xB0 | c), 91, 0); midi_send((uint8_t)(0xB0 | c), 94, 0); midi_send((uint8_t)(0xB0 | c), 7, 57);
+        int pb = 1; if (!is_drum(t)) { midi_send((uint8_t)(0xE0 | c), 0, 127); wait_ms(80); pb = k->bend > 1.5f; midi_send((uint8_t)(0xE0 | c), 0, 64); wait_ms(80); pb = pb && fabsf(k->bend) < 0.01f; }
+        /* the sustain pedal: a note let go keeps sounding until the pedal is up */
+        midi_send((uint8_t)(0xB0 | c), 64, 127); midi_send((uint8_t)(0x90 | c), 50, 100); wait_ms(100); midi_send((uint8_t)(0x80 | c), 50, 0); wait_ms(300);
+        int held = 0; for (int v = 0; v < GB_NVOICE; v++) if (S.v[v].state == V_ON && S.v[v].track == t) held = 1;
+        midi_send((uint8_t)(0xB0 | c), 64, 0); wait_ms(300);
+        int still = 0; for (int v = 0; v < GB_NVOICE; v++) if (S.v[v].state == V_ON && S.v[v].track == t) still = 1;
+        /* a program change: the synths a sound, the drums a kit */
+        int p0 = preset_of[t], k0 = (int)(k->patch.p[SP_E0] * 255.0f + 0.5f);
+        midi_send((uint8_t)(0xC0 | c), 3, 0); wait_ms(200);
+        int pc = is_drum(t) ? (int)(k->patch.p[SP_E0] * 255.0f + 0.5f) != k0 || k0 == 3 : preset_of[t] != p0;
+        printf("[%8.3f]    channel %2d, track %d: CC7 %.2f, CC11 %.2f, pan %.2f, sends %.2f %.2f, bend %d, sustain %d/%d, program %d\n", tw_s(), c + 1, t + 1, l7, l11, pan, rev, dly, pb, held, !still, pc);
+        EXPECT(fabsf(l7 - 20 / 127.0f) < 0.01f && fabsf(l11 - 100 / 127.0f) < 0.01f, "channel %d: CC 7 / CC 11 not the level (%.2f %.2f)", c + 1, l7, l11);
+        EXPECT(pan < 0.01f && rev > 0.99f && fabsf(dly - 64 / 127.0f) < 0.01f, "channel %d: pan or sends not set", c + 1);
+        EXPECT(pb, "channel %d: the bend not followed", c + 1);
+        if (!is_drum(t)) EXPECT(held && !still, "channel %d: the sustain pedal (held %d, ended %d)", c + 1, held, !still);
+        EXPECT(pc, "channel %d: a program change did nothing", c + 1);
+    }
+    wait_ms(1500);
+    EXPECT(snd_voices(&S) == 0, "notes left on (%d voices)", snd_voices(&S));
+    /* CC 1 by itself: the vibrato of the track; the keys' pressure the same */
+    { gb_track *k = &S.trk[1]; midi_send(0xB1, 1, 0); wait_ms(100); float a = k->patch.p[SP_LPIT];
+      midi_send(0xB1, 1, 100); wait_ms(100); float b = k->patch.p[SP_LPIT];
+      midi_send(0xD1, 30, 0); wait_ms(100); float c = k->patch.p[SP_LPIT];
+      printf("[%8.3f]    CC 1: vibrato %.2f -> %.2f, the pressure -> %.2f\n", tw_s(), a, b, c);
+      EXPECT(a < 0.01f && fabsf(b - 100 / 127.0f) < 0.01f && fabsf(c - 30 / 127.0f) < 0.01f, "CC 1 or the pressure not the vibrato");
+      midi_send(0xB1, 1, 0); }
+    /* MIDI LEARN: CC 1 to track 3's level, CC 11 to track 1's reverb send; then the pressure plays CC 1's part */
+    ml_on = 1; ml_pick = 1; ml_trk = 2; ml_code = ML_LEVEL; midi_send(0xB0, 1, 10); wait_ms(150);
+    ml_pick = 1; ml_trk = 0; ml_code = ML_REV; midi_send(0xB0, 11, 10); wait_ms(150); ml_on = 0;
+    int l1 = 0, l11 = 0; for (int i = 0; i < ML_N; i++) { if ((ml_tab[i] & 127) == 1 && ((ml_tab[i] >> 7) & 7) == 2) l1 = 1; if ((ml_tab[i] & 127) == 11 && (ml_tab[i] >> 10) == ML_REV) l11 = 1; }
+    midi_send(0xB5, 1, 90); midi_send(0xB7, 11, 70); wait_ms(150);
+    float lv = S.trk[2].level.tgt, rv = S.trk[0].send_rev.tgt;
+    midi_send(0xD0, 33, 0); wait_ms(150); float lp = S.trk[2].level.tgt;
+    printf("[%8.3f]    learnt: CC 1 %d, CC 11 %d; track 3 level %.2f, track 1 reverb %.2f, the pressure -> %.2f\n", tw_s(), l1, l11, lv, rv, lp);
+    EXPECT(l1 && l11, "CC 1 or CC 11 not learnt");
+    EXPECT(fabsf(lv - 90 / 127.0f) < 0.01f && fabsf(rv - 70 / 127.0f) < 0.01f && fabsf(lp - 33 / 127.0f) < 0.01f, "the learnt CCs, or the pressure, did nothing");
+    for (int i = 0; i < ML_N; i++) ml_tab[i] = 0;
+    /* the sequencer's notes out: each track on its own channel */
+    { static uint8_t pk[4096][4]; for (int t = 0; t < NTRK; t++) { Q.t[t].pat[Q.t[t].cur].n = 0; seq_step_toggle(&Q, t, 0, is_drum(t) ? 0 : 48, 100); seq_step_toggle(&Q, t, 8, is_drum(t) ? 2 : 55, 100); }
+      MC.out = MIDI_OUT_SEQ; tw_usb_take_out(pk, 4096); tap(B_PLAY); wait_ms(2500); tap(B_PLAY); wait_ms(300);
+      uint32_t n = tw_usb_take_out(pk, 4096); int seen[16] = { 0 };
+      for (uint32_t i = 0; i < n; i++) if ((pk[i][1] & 0xF0) == 0x90 && pk[i][3]) seen[pk[i][1] & 15]++;
+      printf("[%8.3f]    notes out by channel: 1:%d 2:%d 3:%d 4:%d 10:%d\n", tw_s(), seen[0], seen[1], seen[2], seen[3], seen[9]);
+      for (int i = 0; i < 5; i++) EXPECT(seen[CH[i]] > 0, "the sequencer sent nothing on channel %d", CH[i] + 1); }
+    /* REMOTE (channel 16): CC 112 is PLAY; the FX channel (15): a note holds its punch-in */
+    m_rmch = 16; m_fxch = 15;
+    midi_send(0xBF, 112, 127); wait_ms(100); midi_send(0xBF, 112, 0); wait_ms(400); int rp = Q.playing;
+    midi_send(0xBF, 112, 127); wait_ms(100); midi_send(0xBF, 112, 0); wait_ms(300);
+    midi_send(0x9E, 53, 100); wait_ms(300); int fx = mfx_key >= 0; midi_send(0x8E, 53, 0); wait_ms(200);
+    printf("[%8.3f]    REMOTE PLAY %d, then %d; FX channel punch-in %d, then %d\n", tw_s(), rp, Q.playing, fx, mfx_key);
+    EXPECT(rp && !Q.playing, "REMOTE: CC 112 is not PLAY");
+    EXPECT(fx && mfx_key < 0, "the FX channel: no punch-in");
+    m_rmch = 0; m_fxch = 0; MC.out = MIDI_OUT_KEYS;
+    check_project_roundtrip("after MIDI 2");
 }
 /* OCT- held at power-on: RESCUE, then PLAY: an empty project, the projects kept */
 static void sc_rescue(void)
@@ -1202,6 +1272,13 @@ static void sc_punch(void)
 {
     boot_wait();
     tap(B_PLAY); wait_ms(800);
+    {   /* (3.4.2, issue #18) FX let go before the key: the punch-in goes on until the key is let go, as 2.8.5 */
+        int k = key_of_punch(PK_ECHO);
+        press(B_FX); wait_ms(100); keydown(k); wait_ms(300); release(B_FX); wait_ms(300);
+        EXPECT(punch_key == k, "FX let go, the key held: the punch-in stopped");
+        keyup(k); wait_ms(200);
+        EXPECT(punch_key < 0, "the key let go: the punch-in goes on");
+    }
     static const int CH[][4] = { { PK_GATE, PK_ECHO, PK_LOOP16, PK_LOOP32 }, { PK_ECHO, PK_LOOP8, PK_REVERSE, PK_GATE },
                                  { PK_LOOP16, PK_TAPESTOP, PK_ECHO, PK_FREEZE }, { PK_REWIND, PK_ECHO, PK_HALF, PK_GATE },
                                  { PK_STUTTER, PK_FLANGER, PK_ECHO, PK_LOOP4 }, { PK_ECHO, PK_ECHO, PK_LOOP16, PK_ECHO } };
@@ -1381,6 +1458,87 @@ static void sc_punchsnd(void)
         EXPECT(!S.panics, "pass %d: the sound panicked (%u)", pass, S.panics);
     }
     trk = 0;
+}
+/* (3.4.2, issue #22: "the arpeggiator does not work, the sound goes silent, on track 3") each synth track of a new
+ * project, then each of its sounds' kinds, a chord held with ARP on: heard, stopped and playing */
+static void sc_arpall(void)
+{
+    boot_wait(); wait_ms(800);
+    for (int pass = 0; pass < 2; pass++) {
+        if (pass) { tap(B_PLAY); wait_ms(300); }
+        for (int t = 0; t < NTRK; t++) {
+            if (is_drum(t)) continue;
+            select_track(t); wait_ms(150);
+            for (int u = 0; u < NTRK; u++) solo[u] = u == t;
+            double off = peak_over(300);
+            arpc[t].mode = AM_UP; arpc[t].rate = 3;
+            keydown(0); keydown(4); keydown(7);
+            double pk[4]; for (int w = 0; w < 4; w++) pk[w] = peak_over(1000);
+            uint32_t v = (uint32_t)snd_voices(&S);
+            keyup(0); keyup(4); keyup(7); wait_ms(300);
+            arpc[t].mode = AM_OFF;
+            for (int u = 0; u < NTRK; u++) solo[u] = 0;
+            printf("[%8.3f]    %s, track %d (%s): ARP peaks %.4f %.4f %.4f %.4f (%.4f without), %u voices\n", tw_s(), pass ? "playing" : "stopped", t + 1, gb_presets[preset_of[t]].name, pk[0], pk[1], pk[2], pk[3], off, v);
+            if (!pass) for (int w = 0; w < 4; w++) EXPECT(pk[w] > 0.0015, "track %d (%s) silent with ARP, second %d (%.4f)", t + 1, gb_presets[preset_of[t]].name, w + 1, pk[w]);
+        }
+        if (pass) { tap(B_PLAY); wait_ms(300); }
+    }
+}
+/* (3.4.2, issue #24: "during SONG playback, step 1 does not play when the track's engine changes between patterns")
+ * track 1: pattern 1 the 808 (E808), pattern 2 RHODES (FM), a note on step 1 of each; a song of 1 bar each, played:
+ * every bar's step 1 heard */
+static void sc_songeng(void)
+{
+    boot_wait(); wait_ms(800);
+    select_track(0); wait_ms(150);
+    int rh = preset_named("RHODES"); EXPECT(rh >= 0, "no RHODES");
+    for (int w = 0; w < 2; w++) {
+        seq_queue(&Q, 0, w); wait_ms(100);
+        Q.t[0].pat[w].n = 0; Q.t[0].pat[w].nlock = 0; seq_step_toggle(&Q, 0, 0, 48, 110);
+        if (w == 1 && rh >= 0) { apply_preset(0, rh); wait_ms(100); }
+        commit_trk(0); wait_ms(100);
+    }
+    EXPECT(PS.s[0][0].engine != PS.s[0][1].engine, "the two patterns' engines the same (%d)", PS.s[0][0].engine);
+    seq_song_set_count(&Q, 2); seq_song_set_len(&Q, 0, 1); seq_song_set_len(&Q, 1, 1);
+    seq_song_set_pat(&Q, 0, 0, 0); seq_song_set_pat(&Q, 1, 0, 1);
+    for (int u = 0; u < NTRK; u++) solo[u] = u == 0;
+    seq_song_play(&Q, 1); wait_ms(300); tw_peak = 0; tap(B_PLAY);
+    int quiet = 0;
+    for (int bar = 0; bar < 6; bar++) {
+        double pk;
+        if (!bar) { wait_ms(150); pk = tw_peak; }        /* (bar 1: from PLAY on) */
+        else { while (Q.tick % SEQ_BAR > SEQ_BAR / 2 || seq_bar(&Q) != (uint32_t)bar) wait_ms(1); pk = peak_over(150); }
+        printf("[%8.3f]    bar %d (pattern %d, engine %d): step 1 peak %.4f\n", tw_s(), bar + 1, Q.t[0].cur + 1, S.trk[0].patch.engine, pk);
+        if (pk < 0.003) quiet++;
+        while (seq_bar(&Q) == (uint32_t)bar) wait_ms(1);
+    }
+    tap(B_PLAY); seq_song_play(&Q, 0);
+    for (int u = 0; u < NTRK; u++) solo[u] = 0;
+    EXPECT(!quiet, "%d bars of 6: step 1 silent after the engine changed", quiet);
+}
+/* (3.4.2, issue #28: "I select a chord (7th) and record: it won't record the chords") SEL CHORD 7TH on track 1, REC,
+ * one white key: the 4 notes of its chord written; and with ARP on: what it plays written */
+static void sc_chordrec(void)
+{
+    boot_wait(); wait_ms(800);
+    select_track(0); wait_ms(150);
+    for (int st = 0; st < 3; st++) {
+        static const int8_t SV[3] = { 0, 40, -40 };
+        harm[0].chord = CH_7TH; strum[0] = SV[st];
+        Q.t[0].pat[Q.t[0].cur].n = 0; Q.t[0].quant = 0;   /* (as played: the strum's order seen) */
+        tap(B_PLAY); wait_ms(300); tap(B_REC); wait_ms(300);
+        uint32_t len = (uint32_t)Q.t[0].pat[Q.t[0].cur].steps * SEQ_TPS, loop = Q.tick / len;
+        while (Q.tick / len == loop) wait_ms(1);
+        wait_ms(40); keydown(white_key[0]); wait_ms(400); keyup(white_key[0]); wait_ms(200);
+        tap(B_REC); wait_ms(300); tap(B_PLAY); wait_ms(300);
+        int n = seq_count(&Q, 0);
+        const seq_pat *P = &Q.t[0].pat[Q.t[0].cur]; int hi = 0, lo = 0;
+        for (int i = 0; i < P->n; i++) { if (P->ev[i].note > P->ev[hi].note) hi = i; if (P->ev[i].note < P->ev[lo].note) lo = i; }
+        printf("[%8.3f]    CHORD 7TH, STRUM %d, one key recorded: %d notes written, the lowest at %u, the highest at %u\n", tw_s(), SV[st], n, n ? P->ev[lo].tick : 0, n ? P->ev[hi].tick : 0);
+        EXPECT(n == 4, "CHORD 7TH, STRUM %d: %d notes written (4)", SV[st], n);
+        if (n == 4 && SV[st]) EXPECT(SV[st] > 0 ? P->ev[lo].tick < P->ev[hi].tick : P->ev[hi].tick < P->ev[lo].tick, "STRUM %d: the wrong note first", SV[st]);
+    }
+    harm[0].chord = CH_OFF; strum[0] = 0;
 }
 /* (3.4.0, Sam: "a MIDI file imported in the editor shows in the FM-1's sequencer, but PLAY gives no sound") what
  * midiImport + patWrite send (ED_NOTES2: cond 0, ratchet 1, the playing pattern), then each track alone, playing */
@@ -2658,7 +2816,7 @@ static const struct { const char *name; void (*fn)(void); } SC[] = {
     { "freetake", sc_freetake }, { "drums285", sc_drums285 }, { "savestutter", sc_savestutter }, { "savepat", sc_savepat }, { "oversave", sc_oversave }, { "recsave", sc_recsave }, { "sections", sc_sections },
     { "boot", sc_boot }, { "reboot", sc_reboot }, { "sounds", sc_sounds }, { "ukit", sc_ukit }, { "pages", sc_pages }, { "record", sc_record },
     { "powercut", sc_powercut }, { "aftercut", sc_after_cut }, { "sample", sc_sample }, { "editor", sc_editor },
-    { "monkey", sc_monkey }, { "import", sc_import }, { "midi", sc_midi }, { "rescue", sc_rescue }, { "calib", sc_calib }, { "settings", sc_settings }, { "play", sc_play }, { "levels", sc_levels }, { "mixui", sc_mixui }, { "fx", sc_fx }, { "editor2", sc_editor2 }, { "serve", sc_serve }, { "vis", sc_vis }, { "banksave", sc_banksave }, { "punch", sc_punch }, { "film", sc_film }, { "inst", sc_inst }, { "lowend", sc_lowend }, { "tour", sc_tour }, { "saveproj", sc_saveproj }, { "selwalk", sc_selwalk }, { "punchsnd", sc_punchsnd }, { "midiimp", sc_midiimp }, { "film2", sc_film2 }, { "bigproj", sc_bigproj }, { "bigcut", sc_bigcut }, { "punch2", sc_punch2 }, { "crumb", sc_crumb }, { "nan", sc_nan } };
+    { "monkey", sc_monkey }, { "import", sc_import }, { "midi", sc_midi }, { "rescue", sc_rescue }, { "calib", sc_calib }, { "settings", sc_settings }, { "play", sc_play }, { "levels", sc_levels }, { "mixui", sc_mixui }, { "fx", sc_fx }, { "editor2", sc_editor2 }, { "serve", sc_serve }, { "vis", sc_vis }, { "banksave", sc_banksave }, { "punch", sc_punch }, { "film", sc_film }, { "inst", sc_inst }, { "lowend", sc_lowend }, { "tour", sc_tour }, { "saveproj", sc_saveproj }, { "selwalk", sc_selwalk }, { "punchsnd", sc_punchsnd }, { "midiimp", sc_midiimp }, { "arpall", sc_arpall }, { "chordrec", sc_chordrec }, { "songeng", sc_songeng }, { "midi2", sc_midi2 }, { "film2", sc_film2 }, { "bigproj", sc_bigproj }, { "bigcut", sc_bigcut }, { "punch2", sc_punch2 }, { "crumb", sc_crumb }, { "nan", sc_nan } };
 static void (*tw_sc)(void);
 static void *tw_script(void *arg)
 {
