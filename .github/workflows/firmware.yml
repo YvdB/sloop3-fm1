@@ -1,0 +1,29 @@
+# Builds the FM-1 firmware and the installer page (fw/build.sh) on GitHub, so it can be tried without a local toolchain.
+# Lives on the build-fw branch only, not in the pull request.
+name: firmware
+on:
+  push:
+    branches: [build-fw]
+  workflow_dispatch:
+jobs:
+  fw:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: The pi32v2 LLVM toolchain (README, The firmware)
+        run: |
+          curl -fLo toolchain.tar.xz https://github.com/jvitkauskas/pi32v2-llvm/releases/download/pi32v2-23.1.5-2/pi32v2-llvm-23.1.5-2-linux-x64.tar.xz
+          echo 'cb896562418a2be93edb9bac26af4bc81a106a32974002a78e6b9fc203c93990  toolchain.tar.xz' | sha256sum -c
+          mkdir toolchain && tar -xJf toolchain.tar.xz -C toolchain --strip-components=1
+      - name: The firmware and the installer page
+        env:
+          INSTALLER_E2E: 0
+          EDITOR_E2E: 0
+        run: sh fw/build.sh toolchain/bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sloop3-fm1-${{ github.sha }}
+          path: |
+            build/fw/installer-fm1.html
+            build/fw/editor-sloop3.html
+            build/fw/fw.area
